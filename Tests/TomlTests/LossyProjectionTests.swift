@@ -82,9 +82,17 @@ import Foundation
 }
 
 @Test func strictThrowsOnUnrecognisedScalar() {
-    let err = #expect(throws: Toml.ParseError.self) { try Toml.parse("color = red") }
-    #expect(err?.line == 1)
-    #expect(err?.message.contains("unrecognised") == true)
+    // do/catch to inspect the error (portable across Swift 6.0 / 6.1 —
+    // the error-returning `#expect(throws:)` overload is 6.1-only).
+    do {
+        _ = try Toml.parse("color = red")
+        Issue.record("expected parse to throw on an unrecognised scalar")
+    } catch let e as Toml.ParseError {
+        #expect(e.line == 1)
+        #expect(e.message.contains("unrecognised"))
+    } catch {
+        Issue.record("wrong error type: \(error)")
+    }
     #expect(throws: Toml.ParseError.self) { try Toml.parse("[a\nx = 1") }   // unterminated header
     #expect(throws: Toml.ParseError.self) { try Toml.parse("x 1") }          // missing '='
 }
