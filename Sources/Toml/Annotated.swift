@@ -23,15 +23,15 @@
 // first content token (the `#:schema` pragma + file header) are document-level
 // `leading` and never move.
 //
-// Scope (M1 — the family-subset milestone): the parser is STRICT and covers
-// what the family's six real config.toml files use — std tables (incl. dotted
-// / quoted-key / numeric-segment headers), arrays-of-tables, single-line
-// inline tables, single- and multi-line arrays, basic / literal strings,
-// decimal / hex integers, floats, booleans, and comments. Values are kept as
-// raw spelling; a typed decode is available on demand via `Entry.value`.
-// Full TOML 1.0 (multi-line strings, datetimes, octal / binary, the complete
-// redefinition state machine) and per-element value editing are the M2 gap —
-// additive, since they extend the value/lexer without touching this contract.
+// Scope: the parser tiles every construct losslessly for round-trip — std
+// tables (incl. dotted / quoted-key / numeric-segment headers), arrays-of-
+// tables, single-line inline tables, single- and multi-line arrays, and
+// single- AND multi-line basic / literal strings (`"""`/`'''`, M2 step 1).
+// Values are kept as raw spelling; a typed decode is available on demand via
+// `Entry.value`. The remaining M2 work is on the strict typed DECODE layer
+// (full datetimes, octal / binary, float specials, the redefinition state
+// machine, invalid-value rejection) and per-element editing — additive, since
+// it reads the raw spelling without touching this byte-preserving contract.
 
 import Foundation
 

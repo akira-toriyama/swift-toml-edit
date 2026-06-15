@@ -7,10 +7,13 @@
 // daemon relies on lives in the LOSSY PROJECTION, not here — a format-preserving
 // editor must understand the whole document, not silently drop part of it.
 //
-// M1 scope: the constructs the family's six configs use. Multi-line *arrays*
-// span physical lines (consumed here); multi-line *strings* (`"""`) are the M2
-// gap and are not yet recognised as multi-line (they would parse as a malformed
-// single line and throw — none of the family configs use them).
+// Multi-line constructs (arrays, inline tables, and — since M2 step 1 —
+// multi-line basic/literal strings `"""`/`'''`) span physical lines: a value
+// is consumed line-by-line until it closes (see `Toml.lexValueOpen` and the
+// shared string-aware scanners in Lexer.swift). The tiler is concerned with
+// STRUCTURE and byte-faithful round-trip; VALUE validity (a malformed number,
+// a reserved escape, a bad datetime) is the strict decode layer's job, not the
+// tiler's — so an invalid value still tiles here and is rejected on decode.
 
 import Foundation
 
@@ -104,24 +107,34 @@ public extension Toml.Annotated {
                 continue
             }
 
-            // --- key = value (value may open a multi-line array) ---
-            guard let eq = code.firstIndex(of: "=") else {
+            // --- key = value (value may span lines: multi-line array, inline
+            //     table, or multi-line string) ---
+            let codeScalars = Array(code.unicodeScalars)
+            guard let eqOffset = Toml.lexFindEq(codeScalars) else {
                 throw Toml.ParseError(line: lineNo, message: "expected '=' in '\(trimmed)'")
             }
+            let keyText = String(String.UnicodeScalarView(codeScalars[0..<eqOffset]))
+                .trimmingCharacters(in: .whitespaces)
+            let key = Toml.lexDottedPath(keyText)
+
+            // The value source is everything in `raw` after the `=`. `code`'s
+            // prefix up to the value equals `raw`'s (comment-stripping only
+            // touches the trailing comment, which is after the value), so we can
+            // slice `raw` by scalar offset. A value that leaves brackets open OR
+            // a multi-line string unterminated continues onto following physical
+            // lines — consume them VERBATIM into `raw` (round-trip is byte-exact)
+            // until the value closes (or EOF).
             var raw = text + term
-            var valuePortion = String(code[code.index(after: eq)...])
-            // A value that opens brackets (`[` / `{`) without closing them on
-            // this line continues onto following physical lines — consume them
-            // into this entry's raw until the brackets balance (or EOF).
-            while Toml.lexBracketDepth(valuePortion) > 0 && i < lines.count {
+            let valueStart = eqOffset + 1
+            func valueSource() -> [Unicode.Scalar] {
+                Array(raw.unicodeScalars.dropFirst(valueStart))
+            }
+            while Toml.lexValueOpen(valueSource()) && i < lines.count {
                 let (ctext, cterm) = lines[i]
                 i += 1
                 raw += ctext + cterm
-                valuePortion += " " + Toml.lexStripComment(ctext)
             }
-            let keyText = String(code[..<eq]).trimmingCharacters(in: .whitespaces)
-            let key = Toml.lexDottedPath(keyText)
-            let valueText = valuePortion.trimmingCharacters(in: .whitespacesAndNewlines)
+            let valueText = Toml.lexValueText(valueSource())
             appendEntry(Entry(leading: takeEntryLeading(), raw: raw, key: key, valueText: valueText))
         }
 
@@ -135,12 +148,14 @@ public extension Toml.Annotated {
     }
 }
 
-// MARK: - Shared lexer helpers (internal)
+// MARK: - Lossless-parser helpers (internal)
 //
-// These mirror the quote/escape-aware scanners in the lossy `Toml` parser.
-// They are duplicated here deliberately for M1: once the lossless parser
-// passes full toml-test, the lossy `parse` / `parseFlat` projections will be
-// re-derived over this DOM and the duplication collapses (a pre-swap step).
+// Line splitting, trivia attribution and dotted-key lexing for the lossless
+// DOM. The string-aware scanners these build on (`lexScanQuoted`,
+// `lexValueOpen`, `lexStripComment`, …) live in Lexer.swift. The lossy `Toml`
+// parser keeps its own private single-char scanners for now; once the lossless
+// parser passes full toml-test, `parse` / `parseFlat` will be re-derived over
+// this DOM and that duplication collapses (the planned post-M2 unification).
 
 extension Toml {
 
@@ -195,54 +210,6 @@ extension Toml {
             else { banner += line.text + line.term }
         }
         return (trailing, banner)
-    }
-
-    /// Strip an unquoted `#` comment to end of line, quote- AND escape-aware
-    /// (a `#` inside `"…"`/`'…'` is kept; an escaped `\"` does not close a
-    /// basic string). Returns the code portion (everything before the comment).
-    static func lexStripComment(_ s: String) -> String {
-        var inStr = false
-        var quote: Character = "\""
-        var escaped = false
-        var out = ""
-        for c in s {
-            if inStr {
-                if escaped { escaped = false }
-                else if c == "\\" && quote == "\"" { escaped = true }
-                else if c == quote { inStr = false }
-                out.append(c)
-            } else if c == "\"" || c == "'" {
-                inStr = true; quote = c; out.append(c)
-            } else if c == "#" {
-                break
-            } else {
-                out.append(c)
-            }
-        }
-        return out
-    }
-
-    /// Net `[`/`{` depth, quote- and escape-aware (brackets inside strings
-    /// don't count). `> 0` means an array / inline table is still open.
-    static func lexBracketDepth(_ s: String) -> Int {
-        var depth = 0
-        var inStr = false
-        var quote: Character = "\""
-        var escaped = false
-        for c in s {
-            if inStr {
-                if escaped { escaped = false }
-                else if c == "\\" && quote == "\"" { escaped = true }
-                else if c == quote { inStr = false }
-            } else if c == "\"" || c == "'" {
-                inStr = true; quote = c
-            } else if c == "[" || c == "{" {
-                depth += 1
-            } else if c == "]" || c == "}" {
-                depth -= 1
-            }
-        }
-        return depth
     }
 
     /// Split a dotted key / header on top-level dots, keeping quoted segments
