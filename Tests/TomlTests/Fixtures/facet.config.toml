@@ -1,0 +1,598 @@
+#:schema ./config.schema.json
+# facet — user configuration
+# https://github.com/akira-toriyama/facet
+#
+# The `#:schema` line above gives editors (taplo / Even Better TOML) key
+# + value completion and inline validation. facet writes this schema next
+# to your config on launch, and it's generated from facet's own config
+# parser (`facet --emit-schema`) — so it always matches the binary.
+#
+# This file is the **single source of truth** for facet's settings.
+# Drop it (or your edited copy) at ~/.config/facet/config.toml:
+#
+#   curl --create-dirs -o ~/.config/facet/config.toml \
+#     https://raw.githubusercontent.com/akira-toriyama/facet/main/config.toml
+#
+# facet only ever READS this file; runtime CLI overrides (e.g.
+# `facet --theme=dracula`) apply for the current session only. To
+# make a change stick, edit the value here and restart facet.
+#
+# Out-of-range / unknown values are silently clamped to safe
+# defaults rather than rejected — a typo can't break the layout.
+
+
+# -----------------------------------------------------------------
+# Color / typography theme
+# -----------------------------------------------------------------
+# Picks the palette + font for the tree panel, grid overlay, and
+# popup menus. Each theme pairs a primary accent (active workspace,
+# keyboard-nav outline) with a complementary secondary accent
+# (status badges).
+#
+# Dark, monospace (editor-style):
+#   "terminal"         — classic green-on-black; emerald text + amber
+#                        accent. The default.
+#   "chomp"            — Pac-Man arcade; bright yellow on black, blue accent.
+#   "cobalt2"          — deep cobalt blue; gold + sky-blue (Wes Bos).
+#   "shades-of-purple" — rich royal purple; gold + aqua.
+#   "tokyo-hack"       — dark indigo; red-orange + pink.
+#   "github-dark"      — GitHub dark; blue + green on slate.
+#   "dracula"          — classic Dracula; purple + pink on charcoal.
+#   "catppuccin-mocha" — soft pastel dark (Mocha); mauve + blue.
+#   "gruvbox"          — retro warm dark; orange + aqua.
+#
+# Animated (rounded; cycles its accents — see `color-cycle-ms`):
+#   "rainbow"          — loud max-saturation: white on violet-black, vivid
+#                        rose + electric-cyan. Set `color-cycle-ms`
+#                        (below) to ANIMATE — the accents rotate through the
+#                        spectrum. ("chomp" also flashes when cycled.)
+#
+# Light:
+#   "github-light"     — GitHub light; blue + violet on white. System font.
+#   "catppuccin-latte" — soft pastel light (Latte); purple + teal.
+#
+# Adaptive:
+#   "system"           — native vibrancy + dynamic colors, follows macOS
+#                        light/dark. Menu font.
+#
+# Special:
+#   "random"           — pick a random theme at each launch / `--reload`
+#                        (excludes "system").
+#
+# Unknown names clamp to "terminal". CLI override (session only):
+# `facet --theme=dracula`.
+[theme]
+name = "terminal"
+
+# ANIMATE the theme: an animatable theme (rainbow / chomp) cycles its
+# accents over this period (integer milliseconds) — rainbow rotates the
+# full spectrum, chomp cycles its arcade flash palette. Independent of
+# the border's color-cycle-ms below. Omit → static palette.
+# 1000–120000 clamp, default 6000.
+# color-cycle-ms = 3000
+
+
+# -----------------------------------------------------------------
+# Neon border effect
+# -----------------------------------------------------------------
+# A neon border on every view — the tree panel, and a screen-edge
+# frame on the grid overview + the rail — layered on top of whatever
+# `theme` is active (independent knob). Off by default.
+#
+#   "off"     — no effect; the tree shows a plain theme-accent border,
+#               the grid / rail show none (the default).
+#   "neon"    — Tokyo-Night blue, electric-neon flashes.
+#   "cyber"   — teal / aqua matrix.
+#   "vapor"   — synthwave pink → purple → cyan.
+#   "kawaii"  — soft pastels.
+#   "chomp"   — arcade yellow → blue (the chomp theme's flash).
+#   "rainbow" — full spectrum (resting hue slowly cycles).
+#   "random"  — pick a random effect at each launch / `--reload`.
+#
+# The border flashes a quick neon burst on a workspace switch, then
+# settles back to the steady color.
+[border]
+effect = "off"
+# Neon bloom around the border. true = glow, false = flat stroke.
+glow = true
+# Border line width in points. 0.5–30 clamp, default 1.5.
+# width = 10
+# Continuous-animation period: milliseconds per cycle (lower =
+# faster). Drives the "rainbow" hue rotation AND the width breath
+# below. SETTING this key also makes a non-rainbow effect (neon /
+# cyber / vapor / kawaii / chomp) continuously CYCLE its border
+# through its own palette over this period (omit the key → that
+# effect stays steady). Border-only — to animate the THEME, use
+# `[theme].color-cycle-ms` above. 1000–120000 clamp, default 6000.
+# color-cycle-ms = 3000
+# Width breathing: when BOTH are set (max > min) the border width
+# oscillates min↔max over color-cycle-ms, for ANY effect (overrides
+# the fixed `width`). Each 0.5–30. Leave unset for a constant width.
+# min-width = 5
+# max-width = 15
+
+
+# -----------------------------------------------------------------
+# Grid overview
+# -----------------------------------------------------------------
+[grid]
+
+# Per-view theme override — this surface only. `""` (the default)
+# inherits `[theme].name`, so all views share the app theme unless
+# you opt a surface out (e.g. a light grid over a dark tree).
+# Same name catalog as `[theme].name` (incl. "random").
+theme = ""
+
+# Number of columns in the overview grid. The row count is derived
+# from the number of workspaces (e.g. 15 workspaces with cols = 5
+# → 5/5/5 rows). Clamped 1..12. Built-in fallback (when this file
+# is absent entirely) is 4; the install template ships with 5
+# because it's the sweet spot for typical workspace counts.
+cols = 5
+
+# Where the workspace header sits relative to its cell.
+#
+#   "up"   — header above each cell (Mission Control style).
+#   "down" — header below each cell (Stage Manager / dock style).
+#
+# The header's size is automatic: it scales with the cell (fewer
+# workspaces → bigger cells → a taller header), so there is no
+# size knob to set.
+label-position = "up"
+
+# Background ScreenCaptureKit refresh cadence (seconds) that keeps
+# grid-view thumbnails warm so `--view=grid` paints immediately
+# with real screenshots instead of icon-fallback. 0 disables the
+# background refresh entirely (cells still capture on demand the
+# first time the grid opens, just with a brief icon flash).
+# Clamped 1..60 when set.
+thumbnail-refresh-seconds = 4
+
+
+# -----------------------------------------------------------------
+# Rail-view (full-screen workspace overview) options
+# -----------------------------------------------------------------
+[rail]
+
+# Per-view theme override — this surface only. `""` (the default)
+# inherits `[theme].name`, so all views share the app theme unless
+# you opt a surface out (e.g. a light grid over a dark tree).
+# Same name catalog as `[theme].name` (incl. "random").
+theme = ""
+
+# Which screen edge the rail's workspace strip docks against:
+#
+#   "bottom" (default) — strip along the bottom, browse with ←/→
+#   "top"              — strip along the top, browse with ←/→
+#   "left"             — strip down the left, browse with ↑/↓
+#   "right"            — strip down the right, browse with ↑/↓
+#
+# A one-off `facet --view=rail --edge=NAME` overrides this for that
+# open. Unknown / unset → "bottom".
+edge = "bottom"
+
+# Maximum strip band size, as a percentage of the SHORT screen edge —
+# the cap on the workspace-thumbnail scale; the hero preview fills the
+# rest. The thumbnails GROW to fill the strip (so the cells span the
+# full width / height with even, tight gaps) up to this cap; a higher
+# value allows bigger thumbnails (and, for very few workspaces, a taller
+# strip + a smaller hero). Short-edge-based, so the strip/hero split
+# stays balanced whichever way the display is turned and on any display
+# size. Clamped 8..50; built-in fallback is 30.
+strip = 30
+
+# Upper bound on how many workspace cells the strip viewport shows at
+# once. The rail is an active-centred CAROUSEL: the active workspace sits
+# at the strip centre and the rest fan out around it; switching rotates
+# the strip so the new active comes to centre (browse with the arrow
+# keys, click to switch). The strip shows every workspace up to this cap,
+# justified to fill the run; with more workspaces than this they rotate
+# through, peeking at both ends. Clamped 1..20; built-in fallback is 7.
+cells = 7
+
+
+# -----------------------------------------------------------------
+# Tree-view (sidebar) options
+# -----------------------------------------------------------------
+[tree]
+
+# Per-view theme override — this surface only. `""` (the default)
+# inherits `[theme].name`, so all views share the app theme unless
+# you opt a surface out (e.g. a light grid over a dark tree).
+# Same name catalog as `[theme].name` (incl. "random").
+theme = ""
+
+# How the hover-preview overlay of a non-active workspace window
+# is sized and placed.
+#
+#   "popover" — small thumbnail anchored next to the source row,
+#               auto-sized to image aspect (capped ~320x220) and
+#               auto-flipped to the row's left if the right side
+#               would overflow. Always on-screen regardless of
+#               where the window actually lives.
+#               Recommended default.
+#
+#   "mirror"  — full-size preview at the window's *would-be*
+#               on-screen frame: the spot it will occupy once you
+#               switch to its workspace. facet computes this from
+#               the pre-park position (float), the tile slot (bsp),
+#               or the full display (stack) — NOT the 1x41 corner
+#               sliver the window is currently parked in.
+#
+# Unknown values clamp to "popover".
+preview-mode = "popover"
+
+# Tree-panel geometry — where the sidebar opens and its size, in
+# screen points with a TOP-LEFT origin: (0,0) is the top-left corner
+# of the main screen, x grows right, y grows DOWN. Same coords as the
+# CLI `facet --view=tree --pos-x/--pos-y/--width/--height`. All FOUR
+# are needed to take effect; a partial set is ignored (logged). Leave
+# all unset for the built-in default (top-left, auto height). This
+# config value is authoritative each launch / `--reload` — dragging or
+# resizing the panel, or a CLI geom flag, only lasts the session, so
+# set it here to make a position / size stick.
+# pos-x  = 8        # 8 px in from the left
+# pos-y  = 8        # 8 px down from the top
+# width  = 400
+# height = 600
+
+# Line-pets: tiny arcade sprites that walk the tree panel's outer
+# border — a shared decoration from the sill theming library (the same
+# pets ride halo's focus ring and wand's cards). They ride a transparent
+# overlay just above the border, so they sit ON the frame, in front.
+# Theme-agnostic: each sprite's colours are baked in, so they read the
+# same under any theme. Opt-in — leave empty / unset for none.
+#
+#   "chomp" — yellow chomping wedge (mouth opens / closes).
+#   "ghost" — red Blinky-style ghost (dome + scalloped skirt + eyes).
+#
+# A TOML array (`[]` = off); order = chase order (the first leads,
+# the rest trail). Unknown names drop with a logged warning.
+# line-pets = ["chomp", "ghost"]
+#
+# Pet size multiplier on the baked-in sprite. Default 0.9 — a touch
+# under the row height so it reads without swamping the text. ≥ 0.1.
+# pet-scale = 0.9
+#
+# Seconds for a pet to circle the row once (size-independent tempo;
+# the speed is derived from the row's perimeter). Default 8. ≥ 0.5.
+# pet-lap-seconds = 8
+
+
+# -----------------------------------------------------------------
+# Tiling gaps
+# -----------------------------------------------------------------
+[layout]
+
+# Startup layout mode every workspace begins in. Layout mode is
+# otherwise session-only (set live with `facet workspace --layout=NAME`
+# and lost on restart), so this is the seed each launch — and each
+# mac desktop's independent catalog — starts every workspace
+# from.
+#
+#   "float"           — facet tiles nothing; windows keep the size and
+#                       position their app gives them (the default).
+#   "bsp"             — binary space partition (auto-tile, splits).
+#   "stack"           — one window fills the screen; others stacked
+#                       behind, cycled with `facet window --cycle-stack`
+#                       (full-screen focus mode).
+#   "master-left" / "master-right" / "master-top" /
+#   "master-bottom" / "master-center" / "spiral" / "grid"
+#                     — stateless layout engines (master-* dock the
+#                       master band on that edge).
+#
+# Unknown / unset clamps to "float" (a typo can't break tiling). To
+# tile by default, set this to "bsp"; per-workspace tweaks are still
+# done live via the CLI.
+default = "grid"
+
+# Spacing for tiled windows, in points. Everything here defaults to 0
+# — windows tile flush, edge-to-edge (facet's behaviour before gaps
+# existed) — so leaving this section out changes nothing. Applies to
+# every layout (bsp / stack / master-* / grid / spiral); floating
+# windows are never touched.
+#
+#   inner-gap — space between two adjacent windows (single value).
+#   outer-gap — distance from the screen edges. `outer-gap` sets all
+#               four edges at once; outer-gap-top / -bottom / -left /
+#               -right override an individual edge (each falls back to
+#               outer-gap, then 0). Stacks on top of the menu bar /
+#               Dock that facet already avoids.
+#
+# inner and outer don't compound at the border: a window's screen-edge
+# side stays exactly its outer-gap, the gap between two windows is
+# exactly inner-gap. Integer points; all clamp to [0, 1000] so a typo
+# can't make windows vanish.
+#
+# Example — even gaps with extra room on the left (e.g. to park the
+# tree panel there, out of the tiled area):
+#   inner-gap = 8
+#   outer-gap = 8
+#   outer-gap-left = 260
+inner-gap = 0
+outer-gap = 0
+# outer-gap-top = 0
+# outer-gap-bottom = 0
+# outer-gap-left = 0
+# outer-gap-right = 0
+#
+# smart-gaps — when a workspace holds a single tiled window, drop the
+#              outer gap so that lone window goes edge-to-edge (the
+#              gaps reappear as soon as a second window joins). Off by
+#              default; only matters when outer-gap > 0.
+# smart-gaps = true
+
+
+# -----------------------------------------------------------------
+# Window-move animation  [animation]
+# -----------------------------------------------------------------
+# Animate geometry transitions instead of snapping. Covered today: the
+# workspace switch (windows slide as a directional filmstrip — leave one
+# edge, enter from the opposite; index delta picks the direction) and
+# retile / layout change (windows reflow in place, resizing as they go).
+# Pure public AX (no private APIs, no SIP changes). macOS "Reduce motion"
+# (System Settings > Accessibility > Display) is honoured: when it's on,
+# transitions jump regardless of the settings below.
+
+[animation]
+# enabled — master switch. Default false (opt-in): a fresh install gets
+# instant transitions. Set true to animate; off is `enabled = false`.
+enabled = false
+# curve — easing / feel (used when enabled). One of:
+#   cubic  — ease-out, no overshoot (default)
+#   spring — slight overshoot then settle (bouncy / premium)
+#   silky  — ease both ends, longer; smooth and unhurried
+#   snappy — fast, crisp deceleration, no overshoot
+#   random — pick one of the above per transition
+# Unknown values fall back to cubic.
+# curve = "cubic"
+# duration-ms — override the slide length (ms, clamped [80, 800]). When
+# unset, each curve uses its own natural default (cubic 280 / spring 420
+# / silky 420 / snappy 220).
+# duration-ms = 280
+# event-driven — sub-toggle for background reflows (window open / close
+# rearranges the remaining tiled windows). Defaults to true when the
+# master `enabled` switch is on. Flip to false to keep WS-switch + your
+# own `--toggle-float` / `--layout=` retiles animated but snap on
+# background opens / closes. New windows always snap to their tile slot
+# regardless (they don't have a meaningful "previous" position to glide
+# from).
+# event-driven = true
+
+
+# -----------------------------------------------------------------
+# Window behaviour  [window]
+# -----------------------------------------------------------------
+[window]
+# raise-on-open — how a freshly-opened FLOATING window (a sheet /
+# dialog / palette, an [[exclude]]-floated window, or any other window
+# facet auto-floats) is surfaced on first sight. Such a window is born
+# wherever its app put it, which can be *under* the tiled layout. This
+# is a ONE-SHOT nudge fired once when the window actually OPENS — NOT a
+# continuous pin (a pre-existing float is left alone on a desktop
+# switch). Read once at launch; edit then restart facet to change.
+#   raise    — (default) lift it to the front of its own app's window
+#              stack WITHOUT taking keyboard focus (facet never steals
+#              focus). Enough for the common case (a dialog the active
+#              app opens).
+#   activate — bring the owning app frontmost on EVERY fresh float;
+#              this DOES steal focus, each time. Pick it when `raise`
+#              (z-order within one app) isn't enough — e.g. floats that
+#              open under a *different* app — accepting that it fronts
+#              the app for any fresh float, not only buried ones.
+#   off      — do nothing; leave it where the app placed it.
+# Unknown values fall back to raise. Only floating windows are touched
+# (tiled windows already get a slot); raised-level overlays / wallpaper
+# are never raised.
+# raise-on-open = "raise"
+
+
+# -----------------------------------------------------------------
+# Window override rules  [[exclude]]
+# -----------------------------------------------------------------
+# facet uses an ALLOWLIST (yabai / AeroSpace style): a window is only
+# tiled when it's positively confirmed a standard window — AX role
+# AXWindow + subrole AXStandardWindow, at the normal window-server
+# level. Everything else (tool-tips, pop-ups, menus, sheets, dialogs,
+# palettes, XPC helper windows) is automatically kept OUT of the
+# tiling layout — no rule needed. So you usually need NOTHING here.
+#
+# These rules are the OVERRIDE layer for the cases the heuristic gets
+# wrong for your taste:
+#
+#   action = "float"  — a standard window you'd rather NOT tile (keep
+#                       it tracked + shown in the tree, just floating).
+#   action = "ignore" — drop a window entirely (never managed, never
+#                       shown). For stray windows still slipping in.
+#   action = "manage" — FORCE-tile a window the allowlist floated /
+#                       ignored — for an app that mislabels a real
+#                       window (non-standard subrole). The escape hatch.
+#
+# Each `[[exclude]]` is one rule. Keys WITHIN a rule are ANDed (all
+# must match); multiple rules are ORed (first match wins, top to
+# bottom). Match keys (all optional, omit = don't care):
+#
+#   app        — regex against the app's bundle id (e.g.
+#                "^com\.apple\.finder$"). Substring search unless you
+#                anchor with ^…$.
+#   title      — regex against the window title. "^$" matches an
+#                unnamed (empty-title) window.
+#   role       — exact AX role     (e.g. "AXWindow").
+#   subrole    — exact AX subrole  (e.g. "AXDialog").
+#   max-width  — match windows no wider than this (points).
+#   max-height — match windows no taller than this (points).
+#
+# action defaults to "float". A rule with no match key is ignored (it
+# would match nothing). A bad regex simply never matches — it can't
+# break the other rules.
+#
+# Example: System Settings IS a standard window, so the allowlist
+# would tile it — but it's a reach-for-then-dismiss window, so float
+# it instead of letting it shove the layout around. (Regex is a
+# substring search; the dots match literal dots here. facet's TOML
+# reader does not unescape backslashes — write regex metachars bare,
+# not "\\.".)
+[[exclude]]
+app = "com.apple.systempreferences"
+action = "float"
+
+# Recommended: Google Chrome spawns transient `AXUnknown`-subrole
+# windows (link hovercards, autofill drop-downs, the download shelf,
+# etc.). They aren't real windows, but the allowlist can't prove
+# they're standard either, so it conservatively *floats* them — which
+# makes them flicker into the tree as a phantom extra window. They
+# carry no useful state, so drop them outright.
+[[exclude]]
+app = "com.google.Chrome"
+subrole = "AXUnknown"
+action = "ignore"
+
+# macOS Accessibility-permission warning dialog (the "… wants to control
+# this computer" prompt — e.g. Halo.app's first-run request). A transient
+# system window; drop it so it never flickers into the tree.
+[[exclude]]
+app = "universalAccessAuthWarn"
+action = "ignore"
+
+# More examples — uncomment / adapt as needed:
+#
+# [[exclude]]                       # force-tile a window an app
+# app = "^com\\.example\\.app$"     # mislabels (non-standard subrole)
+# action = "manage"
+#
+# [[exclude]]                       # never manage a whole app's windows
+# app = "^com\\.example\\.player$"
+# action = "ignore"
+
+
+# -----------------------------------------------------------------
+# [grouping] — how windows are grouped: by facet workspace (default)
+# or by dwm-style tags (M11-3). `by=tag` replaces the per-mac-desktop
+# workspace list with one "tag world" per mac desktop: a window can
+# carry multiple tags, and `facet lens` picks which tag set is shown
+# (windows outside the lens are anchor-parked, same as a hidden
+# workspace). Default: workspace. Unknown value clamps to workspace.
+# -----------------------------------------------------------------
+# [grouping]
+# by = "tag"
+
+# -----------------------------------------------------------------
+# [[tag]] — the tag vocabulary for `by=tag` mode (ignored in
+# workspace mode). One table per tag; declaration order is the tag
+# order (a window's first matching tag is its "primary"). Tables with
+# no non-empty name, or a duplicate name, are dropped.
+# -----------------------------------------------------------------
+# [[tag]]
+# name = "web"
+# [[tag]]
+# name = "code"
+# [[tag]]
+# name = "chat"
+
+# -----------------------------------------------------------------
+# [[assign]] — statically map windows to tags at startup (`by=tag`
+# only; runtime re-tagging isn't supported). Match keys mirror
+# [[exclude]] (app / title / role / subrole substring-regex,
+# max-width / max-height). Tags come from `tag = "x"` and/or
+# `tags = ["x", "y"]` (unioned). A table with no match key or no tag
+# is dropped; an unknown tag name (not declared in [[tag]]) is a
+# startup error.
+# -----------------------------------------------------------------
+# [[assign]]
+# app = "com.google.Chrome"
+# tag = "web"
+#
+# [[assign]]
+# app = "com.apple.dt.Xcode"
+# tags = ["code"]
+
+
+# -----------------------------------------------------------------
+# Workspace behavior (no keys — informational only)
+# -----------------------------------------------------------------
+# How hiding works (fixed behaviour):
+# facet parks the windows of a workspace you're not looking at at a
+# 1×41 px sliver in the bottom-right corner. Instant, no animation,
+# and the windows still appear in Mission Control so you can recover
+# them if facet ever crashes. 41 px is macOS's enforced title-bar
+# minimum; true hide (gone from Mission Control + Cmd-Tab) isn't
+# possible via public APIs, and facet stays inside that contract.
+
+# Tiling (M5 Phase γ) is opt-in per workspace via the CLI; no
+# config key. Each WS starts at `[layout] default` (see above) and
+# can be changed live with:
+#
+#     facet workspace --focus=1
+#     facet workspace --layout=bsp     # this WS now auto-tiles BSP
+#     facet workspace --layout=stack   # or single-window stack mode
+#
+# Other tiling-related verbs:
+#     facet workspace --retile             # recompute + reapply layout
+#     facet window --toggle-float          # exclude window from layout
+#     facet window --toggle-orientation    # rotate parent split (bsp)
+#     facet window --cycle-stack=next|prev # rotate stack focus
+#
+# Frozen scope: bsp / stack / float. master_stack / scrolling /
+# traditional are out (see docs/architecture.md "Phase γ frozen
+# decisions"). System dialogs / sheets / floating palettes get
+# auto-floated on first sight via AX role detection — your
+# manual `--toggle-float` is always authoritative once set.
+#
+# Per-WS mode is *runtime* state (not persisted in config) — set
+# `[layout] default` above to control what every WS starts at.
+
+# -----------------------------------------------------------------
+# Per-mac-desktop workspaces  [desktop.N]
+# -----------------------------------------------------------------
+# facet keeps an INDEPENDENT set of workspaces for each mac desktop.
+# Switch mac desktops (Mission Control / Ctrl+arrow) and the
+# tree shows that desktop's own facet workspaces; a window stays in the
+# desktop it was opened on (facet never moves windows across desktops).
+#
+# `[desktop.N]` gives the Nth mac desktop (Mission Control order,
+# 1-based, user desktops only — fullscreen desktops don't count) its own
+# workspace list. Each entry is a 1-indexed inline-table value:
+#
+#   N = { name = "..." }                    # name only
+#   N = { name = "...", layout = "bsp" }    # name + startup layout
+#
+# `layout` is optional — when omitted the WS starts at the global
+# `[layout] default` above. Valid `layout` values are the layout
+# engines registered at startup (float / bsp / stack / master-left /
+# master-right / master-top / master-bottom / master-center / spiral /
+# grid); an unknown value is silently dropped (the WS then starts at
+# the global default).
+#
+# Two modes, decided by whether ANY [desktop.N] section exists:
+#   - NO [desktop.N] anywhere → every mac desktop is managed with the
+#     default 5 workspaces. Zero config, just works.
+#   - ANY [desktop.N] present → OPT-IN. facet manages ONLY the desktops
+#     that have a section. A desktop without one is left completely
+#     untouched: no facet workspaces, windows stay as-is, and the
+#     facet panel is hidden on that desktop.
+#
+# Caveat: the mapping is by Mission Control position. Reordering your
+# desktops re-points these sections (names/counts only — your windows
+# stay correctly scoped to their real desktop).
+
+# Recommended starter — covers a common 3-desktop dev workflow.
+# Edit the names / counts / layouts to taste, or comment the whole
+# block out to fall back to facet's default (5 unnamed WSs / desktop).
+
+[desktop.1]
+1 = { name = "Dev" }
+2 = { name = "Web" }
+3 = { name = "Notes" }
+
+[desktop.2]
+1 = { name = "Code" }
+2 = { name = "Build" }
+3 = { name = "Logs" }
+4 = { name = "Test" }
+
+[desktop.3]
+1 = { name = "Mail" }
+2 = { name = "Chat" }
+3 = { name = "Cal" }
+4 = { name = "Tasks" }
+5 = { name = "Docs" }

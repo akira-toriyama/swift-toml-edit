@@ -1,0 +1,85 @@
+#:schema ./config.schema.json
+# halo — active-window border. Source-of-truth config template.
+# Copy to ~/.config/halo/config.toml and edit. halo only READS it.
+#
+# The `#:schema` line above gives editors (taplo / Even Better TOML) key
+# + value completion and inline validation. halo writes this schema next
+# to your config on launch, and it's generated from halo's own config
+# parser (`halo --emit-schema`) — so it always matches the binary.
+#
+# Edits apply LIVE — halo watches this file and hot-reloads within ~0.4s,
+# no restart needed. Unknown / malformed keys keep their default, so a
+# typo can't break the ring. ([border] header is optional/cosmetic —
+# keys are read flat.)
+
+[border]
+# Effect palette layered on the ring (mirrors facet's [border] effect):
+#   off | neon | cyber | vapor | kawaii | rainbow | chomp | random
+# (chomp = arcade blue ring blinking pellet-yellow / ghost-red; shares
+# the cross-app `chomp` effect with facet & wand.)
+effect = "neon"
+# Soft outward glow.
+glow = true
+# Ring line width in points.
+width = 3
+# Resting color when effect = off (#RRGGBB).
+color = "#39C5C8"
+
+# Animation (all optional):
+# rainbow rotates its hue over color-cycle-ms (integer milliseconds);
+# for the other effects set cycle-colors = true to loop them through
+# their own flash palette.
+#
+#   1000  — fast churn
+#   6000  — default; calm rotation
+#   12000 — slow drift
+color-cycle-ms = 6000
+cycle-colors = false
+# Set both (max > min) to make the width "breathe" over color-cycle-ms.
+# min-width = 2
+# max-width = 5
+
+# Geometry / scope:
+corner-radius = 10
+pad = 4            # gap between window edge and ring
+min-size = 80      # ignore windows smaller than this (drops tiny popups)
+
+[exclude]
+# Bundle IDs that never get a ring. Array of globs (`*` / `?`), the
+# family-shared shape — same grammar as wand's [exclude].apps.
+#   apps = ["com.apple.finder", "*chrome*"]
+apps = []
+
+[shake]
+# Focus-shake: a quick horizontal jiggle of the focused window when
+# focus changes. Unlike the ring, this MOVES the real window via AX, so
+# it needs Accessibility (grant halo in System Settings → Privacy &
+# Security → Accessibility). Position only — never size — and it restores
+# the exact origin, so neighbouring windows are never affected. Lazy-AX
+# apps (Chrome, Calendar) won't move. Set shake = false to stay
+# permission-free.
+shake = true
+shake-amplitude = 10      # peak horizontal swing in points
+shake-duration-ms = 250   # total shake duration
+
+[sound]
+# Focus-sound: play a short audio cue when focus changes to another
+# window — a third focus feedback alongside the ring flash and the shake.
+# Needs NO permission. OFF by default: point `sound` at an audio file
+# (aiff / wav / m4a / mp3 — anything NSSound reads) to enable it; leave
+# it empty and halo stays silent (halo ships no sound of its own).
+# Latest-wins — a fast alt-tab burst never stacks; only the newest plays.
+sound = ""                # audio file path; empty = off. e.g. "~/.local/share/sounds/window_focused.wav"
+sound-volume = 0.3        # 0.0 … 1.0
+
+[pets]
+# Line-pets: small arcade sprites that ORBIT the focused window's ring,
+# chasing each other around it (first leads, the rest trail at a fixed
+# gap). Opt-in (empty = off), needs NO permission, theme-agnostic — each
+# pet's silhouette is its own colour. Shared with facet & wand via sill.
+#   "chomp" — yellow chomping wedge
+#   "ghost" — red Blinky-style ghost (dome + eyes + skirt)
+line-pets = []            # e.g. ["chomp", "ghost"]; empty [] = off
+pet-scale = 1.5           # pet size multiplier (halo has no font-size to scale from)
+pet-lap-seconds = 8       # seconds for a pet to circle the window once — constant at
+                          # any window size (lower = faster chase, higher = lazier)

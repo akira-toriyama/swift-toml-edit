@@ -1,0 +1,509 @@
+# chord — user configuration template
+# https://github.com/akira-toriyama/chord
+#
+# This file is the **single source of truth** for chord's bindings.
+# chord does NOT ship a GUI. Drop your edited copy at
+# ~/.config/chord/config.toml:
+#
+#   curl --create-dirs -o ~/.config/chord/config.toml \
+#     https://raw.githubusercontent.com/akira-toriyama/chord/main/config.toml
+#
+# chord only ever READS this file. Bindings whose `input` or
+# `action-*` fails to parse are *dropped with a warning* rather than
+# rejected — a typo can never break the daemon. Validate explicitly
+# with `chord config --validate` (or `chord config --validate --strict` in CI).
+#
+# **Everything below is commented out by design.** The shipped
+# template intentionally fires nothing on first install; uncomment
+# the patterns you want. The examples are grouped by use case —
+# pick the ones that match how you actually work.
+
+
+# =====================================================================
+# Global options
+# =====================================================================
+[options]
+
+# Pass unmatched events through to the OS. The default (true) is what
+# you want unless chord is being used as a key-filter layer.
+passthrough-unmatched = true
+
+# Bundle IDs where chord is globally disabled. Useful for apps that
+# already have their own gesture engine (Xcode, video editors, games).
+# Glob (`*` / `?`) supported.
+exclude-apps = []
+
+# Treat arrow / nav keys (left/right/up/down/home/end/page_up/page_down/
+# forward_delete) as fn-agnostic. macOS unconditionally tags those keys
+# with NSEventModifierFlagFunction, so without this relaxation a binding
+# written `input = "ctrl - right"` would never match a real ctrl+→
+# keystroke (you'd have to write `ctrl + fn - right`). Default true.
+# Set false only if you intentionally want to distinguish a hypothetical
+# "fn-less arrow" event source.
+fn-auto-arrows = true
+
+
+# =====================================================================
+# Grammar reference
+# =====================================================================
+# `input` syntax:
+#
+#   • keys:     "cmd + ctrl - f13"
+#   • mouse:    "mouse.side1"               (left | right | middle | side1 | side2)
+#   • scroll:   "ctrl - scroll.up"          (up | down | left | right)
+#
+# Modifier names:
+#   cmd | opt (= alt) | ctrl | shift | fn | hyper (= cmd+opt+ctrl+shift)
+#
+# Side-specific (ZMK ULTRA_LL / Karabiner-style strict layers):
+#   lcmd / rcmd | lopt / ropt (= lalt / ralt) | lctrl / rctrl |
+#   lshift / rshift
+#   Use the any-side spelling (`ctrl`, `cmd`, …) unless the side
+#   actually matters — that's almost always what you want.
+#
+# Key names: a-z, 0-9, f1-f24, return, space, esc, tab, backspace,
+#   delete (= backspace), forward_delete (= ⌦), arrow_{up,down,left,right},
+#   page_{up,down}, home, end, caps_lock, kp_0…kp_9 …
+#   See Sources/ChordCore/KeyCodes.swift for the full table.
+#   Anything else: use `keycode-N` (raw CGKeyCode).
+#
+# One primary action per binding:
+#   action-shell    = "open -a Terminal"     — runs in /bin/zsh -l -c
+#   action-keys     = "cmd + shift - 4"      — chord posts these keys
+#   action-noop     = true                    — eats the event
+#   action-set-var  = "wm"                    — v2: sets wm = 1
+#                                                (use action-set-value=N for ≠1)
+#
+# Run shell AND post keys on the SAME press (Karabiner `to`-array
+# shape): declare both action-shell and action-keys on one binding.
+# The shell fires first, then the keys are posted:
+#   action-shell = "facet --view=tree --loading=2000"
+#   action-keys  = "ctrl - right"
+# (only this pair combines; noop / set-var stay single-action.)
+#
+# Optional secondary action that fires on the key's release:
+#   action-shell-on-up = "…"
+#   action-keys-on-up  = "…"
+#   action-set-var-on-up = "…"  (+ action-set-value-on-up)
+# Both halves are implicitly consumed — the OS sees neither.
+#
+# Optional state-gate (v2):
+#   when-var       = "wm"        — binding fires only when wm == 1
+#   when-var-value = 1            — default; set to 0 to mean
+#                                    "fire only when the variable
+#                                    is cleared or unset"
+#
+# Optional variable lifecycle (v2 — meaningful with action-set-var):
+#   hold-while = "cmd + opt"      — variable auto-clears when this
+#                                    modifier mask is no longer held.
+#                                    Only useful when modifiers stay
+#                                    physically held across keystrokes.
+#   hold-while-timeout = 800       — (recommended for ZMK / Karabiner
+#                                    setups whose firmware fires
+#                                    modifier chords atomically)
+#                                    inactivity timer (ms). Reset every
+#                                    time a binding gated on the same
+#                                    variable fires. Vim's `timeoutlen`
+#                                    semantics.
+#   (mutually exclusive — write one or neither, not both)
+#
+# Shell actions get these env vars:
+#   CHORD_BINDING_NAME, CHORD_FRONTMOST_BUNDLE_ID
+
+
+# =====================================================================
+# Pattern 1 — F13-F24 as launcher keys
+# =====================================================================
+# Useful if you have a programmable keyboard (ZSA Moonlander, custom
+# QMK, etc.) or a remapper (Karabiner) that sends F13–F24. Most
+# physical F-row keyboards stop at F12.
+#
+# [[bindings]]
+# name = "launch Terminal"
+# input = "f13"
+# action-shell = "open -a Terminal"
+#
+# [[bindings]]
+# name = "launch browser"
+# input = "f14"
+# action-shell = "open -a Safari"
+
+
+# =====================================================================
+# Pattern 2 — Side mouse buttons
+# =====================================================================
+# Most ergonomic mice expose `side1` (back) and `side2` (forward).
+#
+# [[bindings]]
+# name = "screenshot selection"
+# input = "mouse.side1"
+# action-keys = "cmd + shift - 4"
+#
+# [[bindings]]
+# name = "screenshot whole screen"
+# input = "shift - mouse.side1"
+# action-keys = "cmd + shift - 3"
+
+
+# =====================================================================
+# Pattern 2b — shell + keys on one press (Karabiner `to`-array style)
+# =====================================================================
+# Flash a facet overlay when navigating, without losing the nav key.
+# The shell runs first (fire-and-forget), then chord posts ctrl+→ so
+# the focused app still receives it. The original ctrl+→ is consumed;
+# the re-posted one is tagged synthetic so it never re-triggers.
+#
+# [[bindings]]
+# name = "facet tree, then nav right"
+# input = "ctrl - right"
+# action-shell = "facet --view=tree --loading=2000"
+# action-keys  = "ctrl - right"
+
+
+# =====================================================================
+# Pattern 3 — Hyper key shortcuts (cmd+opt+ctrl+shift)
+# =====================================================================
+# `hyper` is the no-collision modifier popularised by Karabiner.
+# Pair with a remapped Caps Lock for one-finger access.
+#
+# [[bindings]]
+# name = "open dotfiles"
+# input = "hyper - d"
+# action-shell = "code ~/.dotfiles"
+#
+# [[bindings]]
+# name = "lock screen"
+# input = "hyper - l"
+# action-keys = "cmd + ctrl - q"
+
+
+# =====================================================================
+# Pattern 4 — Emacs / readline-style Ctrl+key remaps (system-wide)
+# =====================================================================
+# Most apps already have these (Cocoa text fields do); enable here to
+# get them in non-Cocoa apps too (Electron, X11, terminal vims, …).
+#
+# [[bindings]]
+# name = "ctrl-b → ←"
+# input = "ctrl - b"
+# action-keys = "left"
+#
+# [[bindings]]
+# name = "ctrl-f → →"
+# input = "ctrl - f"
+# action-keys = "right"
+#
+# [[bindings]]
+# name = "ctrl-p → ↑"
+# input = "ctrl - p"
+# action-keys = "up"
+#
+# [[bindings]]
+# name = "ctrl-n → ↓"
+# input = "ctrl - n"
+# action-keys = "down"
+#
+# [[bindings]]
+# name = "ctrl-h → backspace"
+# input = "ctrl - h"
+# action-keys = "backspace"
+#
+# [[bindings]]
+# name = "ctrl-d → forward delete"
+# input = "ctrl - d"
+# action-keys = "forward_delete"
+
+
+# =====================================================================
+# Action aliases — named shell snippets, referenced via `@name`
+# =====================================================================
+# Lookup is flat: each entry `name = "command"`. Reference from any
+# `action-shell` via the single token `@name`. No recursion
+# (`alias = "@other"` is treated as a literal command). No argument
+# passing (the `@name arg` syntax is RESERVED — values containing
+# whitespace after `@name` are treated as literal command strings).
+#
+# An undefined `@name` reference drops the referring binding with a
+# warning of the exact form:
+#   warning: binding 'foo' (config.toml:42) references undefined alias '@bar'; binding dropped
+# so a typo is loud, not silent.
+#
+# Renamed v0.5.0 → v0.6.0: was `[aliases]`. Schema v3 wire field is
+# `action_aliases` (mirrors the table name).
+#
+# [action-aliases]
+# rift_focus_next  = "rift-cli execute window next"
+# rift_focus_prev  = "rift-cli execute window prev"
+
+
+# =====================================================================
+# Input aliases — named modifier-set chords, referenced via `$name`
+# =====================================================================
+# `[input-aliases]` lets you give a logical name to a modifier set so
+# `input = "..."` can stay readable. Reference uses the `$` prefix
+# (parallels `@name` for action aliases):
+#
+#   [input-aliases]
+#   ULTRA_LL   = "rctrl + ralt + rshift"
+#   MIRACLE_LM = "rctrl + rcmd + rshift"
+#
+#   [[bindings]]
+#   input = "$ULTRA_LL - c"          # = "rctrl + ralt + rshift - c"
+#   input = "$ULTRA_LL + cmd - m"    # mix with built-in modifiers OK
+#
+# Constraints:
+#   * Body = built-in modifier tokens only (no nested alias references)
+#   * Name must not collide with built-in tokens (cmd / ctrl / hyper …)
+#   * Names matched case-insensitively at lookup time
+#
+# Undefined `$name` references emit `undefined-input-alias` and drop
+# the binding. Bare references (no `$`) fall through as
+# `unknown-input-token` (same class as a modifier typo).
+#
+# v0.6.0 change: `$` prefix is now required. v0.5.0 used bare refs.
+#
+# [input-aliases]
+# ULTRA_LL = "rctrl + ralt + rshift"
+
+
+# =====================================================================
+# Pattern 5 — App-scoped overrides
+# =====================================================================
+# Same chord, different action depending on the frontmost app.
+# document order + first-match wins, so put the more-specific
+# `apps = [...]` row before the generic one.
+#
+# [[bindings]]
+# name = "ctrl + scroll → zoom (Code only)"
+# input = "ctrl - scroll.up"
+# apps = ["com.microsoft.VSCode"]
+# action-keys = "cmd - equal"
+#
+# [[bindings]]
+# name = "ctrl + scroll → zoom out (Code only)"
+# input = "ctrl - scroll.down"
+# apps = ["com.microsoft.VSCode"]
+# action-keys = "cmd - minus"
+
+
+# =====================================================================
+# Pattern 6 — ZMK / Karabiner strict-side modifier layers
+# =====================================================================
+# `rctrl + ralt + rshift - x` requires the **right-side** keys held
+# (left-side variants must be released). Encodes ZMK ULTRA_LL-style
+# strict modifier sets the way the firmware intends.
+#
+# [[bindings]]
+# name = "ULTRA_LL → swap window"
+# input = "rctrl + ralt + rshift - tab"
+# action-shell = "yabai -m window --focus next 2>/dev/null || true"
+
+
+# =====================================================================
+# Pattern 7 — Disabling keys entirely
+# =====================================================================
+# Eat an input without posting anything. Common with Caps Lock if you
+# remapped it elsewhere and want to suppress stray presses.
+#
+# [[bindings]]
+# name = "block caps lock"
+# input = "caps_lock"
+# action-noop = true
+
+
+# =====================================================================
+# Pattern 7a — Per-OS branching with [[bindings.per-app]] (chord 0.8.0+)
+# =====================================================================
+# When the SAME trigger should fire different actions per frontmost
+# application, the `[[bindings.per-app]]` AoT sub-row form keeps the
+# trigger declared once. Each per-app entry expands to a normal
+# binding with `apps = [bundle-id]` at parse time.
+#
+# Example: the canonical "tab-left" — Ctrl+Shift+Tab in Chrome,
+# Cmd+Shift+[ in VS Code, same chord ULTRA_LL+c.
+#
+# [[bindings]]
+# name = "tab-left"
+# input = "rctrl + ralt + rshift - c"
+#
+#   [[bindings.per-app]]
+#   bundle-id = "com.google.Chrome"
+#   action-keys = "ctrl + shift - tab"
+#
+#   [[bindings.per-app]]
+#   bundle-id = "com.microsoft.VSCode"
+#   action-keys = "cmd + shift - ["
+#
+# Constraints:
+#   • `apps = [...]` and `per-app` are mutually exclusive (the
+#     entry's `bundle-id` becomes the binding's `apps`).
+#   • `bundle-id` is required and non-empty on each entry.
+#   • A per-app entry without an action-* field inherits the base
+#     row's action — useful when only one OS needs an override.
+#   • The base row's `when-var` / `hold-while` / etc. layer the
+#     same way (entry overrides base; otherwise inherit).
+
+
+# =====================================================================
+# Pattern 7b — Bulk 1-to-1 remap with [[remap]] (chord 0.8.0+)
+# =====================================================================
+# When you want N keys to all carry the same modifier set and each
+# emit a different action-keys, the `[[remap]]` table form collapses
+# the boilerplate. Each map entry expands to a normal binding at
+# parse time.
+#
+# Example: emacs / readline cursor remap under bare `ctrl`.
+#
+# [[remap]]
+# name = "emacs-readline"
+# modifiers = "ctrl"
+# map = { b = "left", f = "right", p = "up", n = "down", h = "backspace", d = "forward_delete", j = "return" }
+#
+# Constraints:
+#   • `modifiers` is required and must contain at least one modifier.
+#     `$alias` references into [input-aliases] are resolved here too.
+#   • `map` values are interpreted as `action-keys` strings.
+#   • `apps = [...]` is inherited verbatim by every expansion.
+#   • Regular `[[bindings]]` declared above (or below) override a
+#     remap entry with the same input — first-match-wins, and remap
+#     expansions are appended AFTER regular bindings.
+
+
+# =====================================================================
+# Pattern 8 — Fallback feedback ([[fallbacks]] section)
+# =====================================================================
+# `[[fallbacks]]` fires ONLY when no `[[bindings]]` row matched. Use
+# `*` as the primary key to match every keyboard key under the given
+# modifier set. `*` is rejected inside `[[bindings]]` to keep a
+# regular binding from silently swallowing every key.
+#
+# Canonical use: an audible "no such chord" cue when a layered
+# keyboard fires an undefined key under a strict modifier set.
+#
+# [[fallbacks]]
+# name = "ULTRA_LL undefined feedback"
+# input = "rctrl + ralt + rshift - *"
+# action-shell = "afplay /System/Library/Sounds/Pop.aiff"
+#
+# When several modifier sets share the same feedback action, the
+# `inputs = [...]` array form (chord 0.8.0+) collapses N copy-pasted
+# rows into one. Each entry expands to its own fallback at parse time.
+# (The hand-rolled TOML parser requires the array on a single line.)
+#
+# [[fallbacks]]
+# name = "undefined feedback (4 modsets)"
+# inputs = ["rctrl + ralt + rshift - *", "rctrl + rcmd + rshift - *", "rctrl + rcmd + ralt - *", "rcmd + ralt + rshift - *"]
+# action-shell = "afplay /System/Library/Sounds/Pop.aiff"
+
+
+# =====================================================================
+# Pattern 9 — Leader-key mode with inactivity timeout (low-level form)
+# =====================================================================
+# Spelled out as individual `[[bindings]]` rows. Useful for understanding
+# how leader-key mode works. **For new configs, prefer Pattern 11
+# (`[[sequence]]`)** — same semantics with less boilerplate.
+# Vim-style timeoutlen leader. Tap leader to "arm" the layer, then
+# tap follow-up keys within the timeout window. Each gated keypress
+# extends the timer (B-α reset-on-use), so a sustained editing
+# session keeps the layer alive. After 800ms of inactivity the
+# variable auto-clears.
+#
+# Use this form when your keyboard firmware (ZMK macros, Karabiner
+# complex_modifications, …) emits modifier chords atomically — i.e.
+# the modifiers drop between primary keys at the OS level. Pattern 10
+# below (`hold-while`) only works when the modifiers stay physically
+# held across keystrokes — many programmable keyboards can't deliver
+# that.
+#
+#   ULTRA_LL + j         → enter j-layer (sets jlayer=1, 800ms timer)
+#   ULTRA_LL + k         → Enter         (only when jlayer=1, resets timer)
+#   ULTRA_LL + l         → Backspace
+#   (no input for 800ms) → jlayer auto-clears
+#
+# [[bindings]]
+# name = "ULTRA_LL + j → arm j-layer"
+# input = "rctrl + ralt + rshift - j"
+# action-set-var = "jlayer"
+# hold-while-timeout = 800
+#
+# [[bindings]]
+# name = "ULTRA_LL + k → Enter (in j-layer)"
+# input = "rctrl + ralt + rshift - k"
+# when-var = "jlayer"
+# action-keys = "return"
+#
+# [[bindings]]
+# name = "ULTRA_LL + l → Backspace (in j-layer)"
+# input = "rctrl + ralt + rshift - l"
+# when-var = "jlayer"
+# action-keys = "backspace"
+
+
+# =====================================================================
+# Pattern 10 — Leader-key mode with modifier hold (Karabiner-style)
+# =====================================================================
+# Same idea as Pattern 9, but the layer's lifetime is tied to a held
+# modifier mask rather than an inactivity timer. Auto-clears the
+# moment the modifier drops. Only useful when the modifiers stay
+# physically held across keystrokes — i.e. plain software keyboard
+# usage, NOT atomic-chord firmware. If unsure, prefer Pattern 9.
+#
+#   cmd + opt + j        → enter wm-mode (sets wm=1)
+#   cmd + opt + k        → maximize         (only when wm=1)
+#   cmd + opt + l (down) → snap-left
+#   cmd + opt + l (up)   → snap-right       (fires action_on_up)
+#   cmd + opt released   → wm cleared
+#
+# [[bindings]]
+# name = "wm: enter (leader)"
+# input = "cmd + opt - j"
+# action-set-var = "wm"
+# hold-while = "cmd + opt"
+#
+# [[bindings]]
+# name = "wm: maximize"
+# input = "cmd + opt - k"
+# when-var = "wm"
+# action-shell = "yabai -m window --grid 1:1:0:0:1:1"
+#
+# [[bindings]]
+# name = "wm: snap left → snap right on release"
+# input = "cmd + opt - l"
+# when-var = "wm"
+# action-shell = "yabai -m window --grid 1:2:0:0:1:1"
+# action-shell-on-up = "yabai -m window --grid 1:2:1:0:1:1"
+
+
+# =====================================================================
+# Pattern 11 — `[[sequence]]` leader-key sugar (chord 0.7.0+, RECOMMENDED)
+# =====================================================================
+# Pattern 9 (state-var + hold-while-timeout) expressed compactly.
+# Each `[[sequence]]` block expands at parse time into:
+#   • one prefix binding (action-set-var = "_seq_<name>", hold-while-timeout)
+#   • one child binding per `[[sequence.bindings]]` row (when-var, action)
+# Matcher / Controller see only the expanded bindings — `[[sequence]]`
+# is pure syntactic sugar over the existing v2 state-machine.
+#
+# Children's `input` is **primary-only** — they inherit the prefix's
+# modifier set automatically. The `_seq_*` variable name is reserved
+# (user bindings cannot write `action-set-var = "_seq_..."`).
+#
+# Equivalent to the Pattern 9 example above, in one block:
+#
+# [[sequence]]
+# name = "j-layer"
+# prefix = "rctrl + ralt + rshift - j"
+# timeout-ms = 800
+#
+#   [[sequence.bindings]]
+#   input = "k"
+#   action-keys = "return"
+#
+#   [[sequence.bindings]]
+#   input = "l"
+#   action-keys = "backspace"
+#
+# If a regular `[[bindings]]` row has the same `(trigger, modifiers)`
+# as a sequence prefix, the regular row is **dropped with a warning**
+# (sequence wins). Duplicate sequence names are likewise rejected
+# (each sequence owns variable `_seq_<name>`).

@@ -1,0 +1,15 @@
+## Build artifacts
+.build/
+DerivedData/
+
+## SwiftPM
+# Ignored: this is a zero-dependency LIBRARY, so the lockfile is empty noise.
+# (If a dependency is ever added, reconsider committing Package.resolved.)
+Package.resolved
+.swiftpm/
+
+## Xcode project (generated; never committed for a SwiftPM package)
+*.xcodeproj
+
+## macOS
+.DS_Store

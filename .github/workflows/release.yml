@@ -1,0 +1,30 @@
+# Release — a Swift library is consumed by SwiftPM PURELY BY GIT TAG, so there
+# is no .app/.zip/Homebrew artifact (the family's app-oriented `release.yml`
+# reusable does not apply). Cutting a release is: `git tag vX.Y.Z && git push
+# --tags`; this workflow then generates notes with git-cliff (the family's
+# changelog tool) and creates the GitHub Release for that tag. The human
+# controls WHEN to tag (right for a correctness-critical lib: tag only after
+# CI conformance + round-trip are green).
+name: Release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: git-cliff@2
+      - name: Generate notes for this tag
+        run: git-cliff --config cliff.toml --current --strip all > RELEASE_NOTES.md
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --notes-file RELEASE_NOTES.md

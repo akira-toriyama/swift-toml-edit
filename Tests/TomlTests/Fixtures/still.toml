@@ -1,0 +1,15 @@
+# still — the sill theme preview app.
+# Read from ./still.toml (or $STILL_CONFIG). Edit + re-run `swift run still`.
+# This is the ONE config.toml in sill; the library modules stay config-less.
+
+# Which themes to show. "all" = the full gallery, or a single canonical
+# name (terminal · chomp · rainbow · cobalt2 · shades-of-purple · tokyo-hack
+# · github-dark · dracula · catppuccin-mocha · gruvbox · github-light ·
+# catppuccin-latte · system). Unknown names fall back to terminal.
+theme = "all"
+
+# Specimen text scale (1.0 = default).
+font-scale = 1.0
+
+# Show the effect flash-palette strip for animatable themes (chomp/rainbow…).
+show-effects = true

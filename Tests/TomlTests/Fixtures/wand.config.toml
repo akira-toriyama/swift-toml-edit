@@ -1,0 +1,1032 @@
+#:schema ./config.schema.json
+# wand — user configuration
+# https://github.com/akira-toriyama/wand
+#
+# The `#:schema` line above gives editors (taplo / Even Better TOML) key
+# + value completion and inline validation. wand writes this schema next
+# to your config on launch, and it's generated from wand's own config
+# parser (`wand config --emit-schema`) — so it always matches the binary.
+#
+# This file is the **single source of truth** for wand's settings.
+# wand does NOT ship a GUI. Drop your edited copy at
+# ~/.config/wand/config.toml:
+#
+#   curl --create-dirs -o ~/.config/wand/config.toml \
+#     https://raw.githubusercontent.com/akira-toriyama/wand/main/config.toml
+#
+# wand only ever READS this file. Out-of-range / unknown values are
+# silently clamped to safe defaults rather than rejected — a typo
+# can never break the daemon. Validate explicitly with
+# `wand config --validate`.
+
+
+# -----------------------------------------------------------------
+# Schema layout
+# -----------------------------------------------------------------
+# Each block has a single concern. Nested sub-blocks scope fields
+# by what they actually animate / configure, so the section path
+# alone announces the responsibility — no flat-prefix soup.
+#
+# Value conventions:
+#   * Enum fields whose "disabled" / "no animation" state is one
+#     option use `"off"` consistently (`kind`, `border`, `open`,
+#     `close`, `fire`, `cancel`, `armed`).
+#   * String fields whose empty value means "inherit from theme /
+#     default" use `""` (the colour fields under
+#     `[cast.overlay.trail]` / `[cast.fire.burst]`).
+#   * Arrays use `[]` for the empty case.
+#   * Booleans use `true` / `false`.
+#
+# Sections:
+#   [exclude]                       — global: applies to every trigger
+#
+#   [cast]                          — cast trigger (right-button + drag
+#                                     draws a shape; the wand "casts"
+#                                     the matched rule on the cursor-
+#                                     anchored target window) +
+#                                     cast-wide `intensity` multiplier
+#   [cast.recognition]              — sample → direction tuning
+#   [cast.overlay]                  — overlay enabled toggle + blur
+#   [cast.overlay.trail]            — trail line itself
+#   [cast.overlay.badge]            — origin badge
+#   [cast.overlay.cards]            — assist-card cosmetics + effects
+#   [cast.chomp]                  — chomp special-theme knobs
+#                                     (only read under
+#                                      [cast].theme = "chomp")
+#   [cast.fire.burst]               — fire-moment particle burst
+#   [cast.fire.decal]               — post-fire ink decal
+#   [[cast.cursor.rule]]            — default: one cursor-anchored
+#                                     pattern → action rule
+#   [[cast.focused.rule]]           — frontmost-app fallback variant
+#                                     (fires when the cursor sits on
+#                                     a non-AX surface — Desktop /
+#                                     Dock / menu bar)
+#
+#   [tome]                          — tome trigger (middle-click pops
+#                                     a contextual menu — your
+#                                     spellbook of rows to pick from)
+#                                     + layout
+#   [tome.row]                      — per-row visual cosmetics
+#   [tome.animation]                — panel open / close animations
+#   [tome.decoration]               — static panel decoration
+#   [tome.decoration.border]        — decorative border rim
+#                                     (effect / width / cycle)
+#   [[tome.cursor.item]]            — one menu row (cursor-anchored)
+
+
+# -----------------------------------------------------------------
+# Global — disable wand entirely for specific bundle ids
+# -----------------------------------------------------------------
+[exclude]
+
+# Bundle IDs where wand is completely disabled — useful for apps
+# that already have native gestures (Xcode, video editors, …).
+# Supports `*` / `?` glob. Applies to both cast rules and
+# tome entries.
+apps = []
+
+
+# -----------------------------------------------------------------
+# Failsafe — required safety net (mandatory; missing block →
+# wand refuses to start)
+# -----------------------------------------------------------------
+# wand grabs low-level mouse via CGEventTap. A bug, a crash, or a
+# swallowed event maps directly to "the user's PC is now unusable".
+# This block defines the safety nets that catch such failures. It
+# is **mandatory**: removing it makes `wand config --validate` and server
+# startup both refuse to proceed.
+#
+# Deliberate inversion of wand's clamp-to-default rule that covers
+# every other key. A silently-defaulted safety net is worse than a
+# loud "your config is missing this required block".
+[failsafe]
+
+# Maximum time (seconds) any mouse button may stay reported as
+# `down` before wand force-releases it. Catches both wand-origin
+# stuck states and external HID layers (Karabiner-Elements,
+# Logitech Options, KVMs) that drop the real up event.
+# Clamped 5..300.
+mouse-hold-timeout-seconds = 30
+
+# Emergency release key. Observed via NSEvent global monitor —
+# passively, so the underlying app still receives the key (Esc still
+# closes modals, cancels input, etc). The release sequence is
+# idempotent: releasing an un-held button is a no-op, so the
+# firehose of normal Esc presses is harmless. Only logs when wand
+# actually released something — quiet log = healthy, an entry =
+# wand had to step in. Currently only "esc" is implemented; future
+# keys can be added without a schema change.
+emergency-release-key = "esc"
+
+
+# -----------------------------------------------------------------
+# Cast — right-button + drag draws a shape that fires a rule
+# -----------------------------------------------------------------
+[cast]
+
+# Which mouse button initiates a stroke.
+#   "right"   — right mouse button (most common)
+#   "middle"  — middle button / scroll-wheel click
+#   "side1"   — back button (Mouse Button 4)
+#   "side2"   — forward button (Mouse Button 5)
+button = "right"
+
+# Modifier keys that must be held at button-down for a stroke to
+# start. Empty = no modifier required.
+# Valid values: "cmd", "opt", "ctrl", "shift", "fn"
+modifiers = []
+
+# Overall multiplier applied to every visual effect produced by a
+# cast firing — `[cast.overlay.cards]` particle animations
+# AND the `[cast.fire.burst]` cursor-anchored explosion. Decal
+# has its own size / duration knobs and is not affected.
+#
+# Stays inline at this cast-family level because the scope spans
+# both `[cast.overlay]` and `[cast.fire]` — placing it inside
+# either sub-block would mislead about which effects it scales.
+#
+#   subtle  ≈ 0.6× (calm)
+#   normal  ≈ 1.0× (default, the calibrated baseline)
+#   bold    ≈ 1.6× (more attention-grabbing)
+#   wild    ≈ 2.5× (over-the-top)
+intensity = "normal"
+
+# Coordinated colour palette for the cast HUD + fire-moment
+# effects. Sets the colours for:
+#   trail   — color / color-no-match / color-outline (still
+#             overridable per-key under `[cast.overlay.trail]`)
+#   cards   — border / body / text / fires-body / fires-text
+#   fire    — burst.color (overridable under `[cast.fire.burst]`)
+# (Decal is intentionally not themed — it always uses the Splatoon
+# multi-team ink palette; that's the identity of the effect.)
+#
+#   "system"   — native look: OS control-accent trail on the system
+#                frosted blur (the default)
+#   "terminal" — classic phosphor green-on-near-black, amber secondary
+#   "chomp"    — ★ SPECIAL THEME. Arcade Chomp: yellow wedge chasing a
+#                black corridor flanked by neon-blue maze walls, with
+#                red-ghost no-match. Locks the trail render shape —
+#                `style`, `width`, `straighten-on-turn` under
+#                [cast.overlay.trail] are IGNORED. Replaces `width`
+#                with `[cast.chomp].size = "s" | "m" | "l"` (below).
+#   "rainbow"  — full-spectrum animated trail + cards
+#   "cobalt2"  — deep cobalt-blue, bright-gold accent
+#   "shades-of-purple" — purple-indigo, golden-yellow accent
+#   "tokyo-hack"       — midnight-indigo, red-orange chrome
+#   "github-dark"      — link-blue on near-black, green secondary
+#   "dracula"          — vivid dark purple, pink secondary
+#   "catppuccin-mocha" — soft pastel dark mauve
+#   "gruvbox"          — retro warm dark, orange accent
+#   "github-light"     — clean daytime white, link-blue (LIGHT)
+#   "catppuccin-latte" — warm-grey lavender (LIGHT)
+#
+# wand-only dynamic engine themes (no sill palette):
+#   "neon"     — per-frame cycling electric neon trail on violet cards
+#   "splatoon" — per-stroke random Turf-War ink, white outline
+#
+#   "random"   — pick a concrete theme at launch
+#
+# Themes derive from the shared sill catalog (one source across the
+# facet / perch / wand family): trail <- primary, no-match <- error,
+# text <- foreground, cards / outline / badge <- background. Individual
+# [cast.overlay.*] colour keys still override per field.
+# Unknown names clamp to "system". Validate with `wand config --validate`.
+theme = "system"
+
+
+# -----------------------------------------------------------------
+# Cast recognition — sample → direction tuning
+# -----------------------------------------------------------------
+[cast.recognition]
+
+# Minimum displacement (px) before a new direction is emitted.
+# Smaller = more sensitive (catches small flicks), bigger = more
+# tolerant of jitter. Clamped 4..200.
+min-stroke-px = 16
+
+# Maximum time (ms) a single segment may take — the clock resets on
+# every turn, so it's a per-segment budget, not a whole-stroke one.
+# A multi-segment gesture gets the full budget for each leg; only a
+# stalled single direction (an ordinary, deliberate right-drag) runs
+# past it and is abandoned (no action fires). 0 = no limit. Clamped
+# 100..60000 when set.
+max-segment-ms = 0
+
+# Scribble-to-cancel: the number of 180° direction reversals (a
+# quick back-and-forth) that abandons the in-progress stroke. Once
+# reached the gesture is dead — releasing fires nothing, with no
+# waiting for a timeout. A real gesture rarely reverses, so 2
+# catches a deliberate scribble without false positives. 0 = off.
+# Clamped 1..20 when set. Raise it above the most-reversing rule
+# you define.
+cancel-reversals = 2
+
+# Speed gate for the scribble: the reversals above must all fall
+# within this window (ms) to cancel, so a *fast* back-and-forth
+# cancels but a slow deliberate one doesn't. 0 = any speed (count
+# alone cancels). Clamped 100..5000 when set.
+cancel-window-ms = 500
+
+
+# -----------------------------------------------------------------
+# Cast overlay — translucent trail drawn while you draw a gesture
+# -----------------------------------------------------------------
+[cast.overlay]
+
+# Show the trail / badge / cards while a stroke is in progress. The
+# overlay is click-through and clears the instant you release the
+# button. `enabled = false → true` needs a daemon restart (the
+# window is allocated at startup).
+enabled = true
+
+# Use the macOS frosted blur (NSVisualEffectView) under the HUD
+# cards + badge. Set false to fall back to a solid dark fill —
+# easier on the eyes for some screens, and a touch cheaper.
+blur-enabled = true
+
+# Cycle period in milliseconds for the dynamic colour modes
+# (`rainbow` / `neon`). Smaller = faster strobe; larger = slower
+# drift. Clamped 100..10000. Shared by trail + cards (border /
+# body / text) + trail outline — anything that resolves a dynamic
+# colour uses this period, so a `rainbow` trail and a `rainbow`
+# card border cycle in lockstep. Ignored by static and `splatoon`
+# modes (the latter is per-stroke fixed).
+#
+#   500   — strobing (very fast colour churn)
+#   1000  — flicker
+#   2000  — default; visible cycle in a typical short stroke
+#   5000  — slow drift, almost-solid feel
+color-cycle-ms = 2000
+
+
+# Trail line — the stroke you draw, plus how it recolours when the
+# shape matches / doesn't match any rule.
+[cast.overlay.trail]
+
+# The trail is coloured by whether the shape you've drawn so far
+# matches a rule for the window under the cursor:
+#   color           — while it matches a rule (and before you've
+#                     moved enough to recognise any direction)
+#   color-no-match  — once the shape matches no rule (e.g. you set
+#                     up "RD" but drew "RL")
+# Accepts a name (blue red green orange purple pink yellow white
+# black, or "accent" for the system accent color), a hex string
+# ("#rgb" / "#rrggbb" / "#rrggbbaa"), or a reserved dynamic token:
+#
+#   "rainbow"   — smooth hue cycle (~3s period)
+#   "neon"      — electric palette interpolated on a ~2s cycle
+#   "splatoon"  — pick a random hue from the Splatoon ink palette
+#                 at the start of each stroke
+#
+# `color` and `color-no-match` are independent — fine to set one to
+# a dynamic token and the other to a static hex.
+# Empty (`""`) = inherit from `[cast].theme`. Non-empty value
+# overrides the theme's palette for that field.
+color = "#3b82f6"
+color-no-match = "#ef4444"
+
+# Outline / underlay colour drawn behind or around the trail so the
+# main `color` reads against backgrounds that would otherwise
+# swallow it. Empty (`""`) = no outline. Same grammar as `color`.
+# Style-specific rendering:
+#   normal/dashed/dotted — wider underlay stroke beneath the trail
+#   pixel / rainbow-road — 1pt outline-colour frame inset into each
+#                          cell (every dot looks framed)
+#   ascii                — solid backing rect under each glyph
+#                          (terminal / cmatrix feel)
+# Under `[cast].theme = "chomp"` the outline drives the corridor's
+# flanking wall colour — the theme palette already supplies the
+# neon-arcade blue, so set this only to override.
+color-outline = ""
+
+# Trail width. Clamped 1..40. Meaning depends on `style`:
+#   normal / dashed / dotted — stroke width in points
+#   pixel                    — thickness in fixed-size cells
+#   ascii                    — thickness in fixed-size glyphs
+#   paws                     — scale multiplier on paw print size +
+#                              spacing
+#
+# IGNORED under `[cast].theme = "chomp"` — use
+# `[cast.chomp].size = "s" | "m" | "l"` instead.
+width = 3
+
+# Trail dash pattern preset. **Shape only — the trail's colour is
+# always sourced from `color` / `color-no-match` above**, so the
+# match-vs-no-match signal isn't lost when the style changes.
+#
+#   "normal"       — single solid stroke (default)
+#   "dashed"       — broken line (3:2 dash:gap)
+#   "dotted"       — short-dash dotted line (0.6:2 dash:gap)
+#   "pixel"        — 8-bit / pixel-art: fixed 5pt cells stepped
+#                    along the path; `width` = cells across
+#   "ascii"        — AA-art: 14pt monospaced glyphs picked
+#                    dynamically — flickering trail
+#   "rainbow-road" — pixel cells coloured by a spectrum-ordered
+#                    palette (red/orange/yellow/green/blue/indigo/
+#                    purple). Style-specific exception: `color`
+#                    is overridden by the palette; `color-no-match`
+#                    still wins.
+#   "arrow"        — continuous chevron chain along the whole path
+#                    (`-->-->-->`), each `>` rotated to match the
+#                    local tangent
+#   "paws"         — `pawprint.fill` SF Symbol drawn along the
+#                    path, rotated along the tangent and
+#                    alternating left/right of the centreline
+style = "normal"
+
+# How long (ms) the trail lingers after a gesture fires. The
+# in-progress segment is first snapped onto its axis so the whole
+# path reads as a clean orthogonal polyline, held at full alpha,
+# then faded out across the window. Set to 0 for an instant clear
+# (matches the no-match behaviour). Clamped 0..2000.
+#
+# Under `[cast].theme = "chomp"` this value is mostly IGNORED —
+# the dedicated post-fire eat sequence (icon appears at the trail
+# tip, Pac-Man chomps toward it, "+N" popup floats up) uses its
+# own fixed 1.10 s hold + fade timing. The one knob still
+# respected is `final-hold-ms = 0`, which disables the hold path
+# entirely and skips the eat sequence too (matches the "hold off"
+# intent).
+final-hold-ms = 400
+
+# How committed past segments render once you turn (e.g. `D → L` in
+# `DLD`):
+#   true   — snap the just-completed segment onto its axis so the
+#            trail reads as a clean orthogonal polyline.
+#   false  — keep every sample as raw freehand; the trail follows
+#            the literal hand path, jitter included.
+# Recognition is unaffected either way — this is a render-only knob.
+#
+# IGNORED under `[cast].theme = "chomp"` — that theme forces
+# straighten-on-turn = true.
+straighten-on-turn = true
+
+
+# Origin badge — small app-icon chip at the gesture's start point.
+[cast.overlay.badge]
+
+# Show the target-app icon as a small "badge" at the gesture's
+# start point (where the trigger button went down). Confirms which
+# window the gesture will act on — useful when keyboard focus is on
+# a different window than the cursor is over.
+enabled = true
+
+# Origin-badge size in points. Clamped 32..96.
+size = 56
+
+# Tiny scale-in pop (0.85 → 1.0 over 150 ms) when the badge first
+# appears. Decorative; set false if motion bothers you.
+anim-enabled = true
+
+
+# Assist cards — the cards next to the cursor that list reachable
+# rules. Two single-shot exit animations plus one continuous mid-
+# stroke cue, all defaulting to `"off"`:
+#
+#   "off"          — instant disappear (default)
+#   "drop"         — falls down off-screen
+#   "rise"         — floats up off-screen
+#   "slide-left"   — slides out to the left
+#   "slide-right"  — slides out to the right
+#   "explode"      — scales up briefly then fades
+#   "vibrate"      — shakes in place, then fades
+#   "fade"         — pure opacity fade
+#   "fireworks"    — bursts upward from the card with a particle pop
+#   "confetti"     — rains particles down past the card
+#   "random"       — pick a random one each time a card disappears
+#
+# Particle effects (`fireworks` / `confetti`) read most naturally on
+# `fire` — the moment a rule actually fires.
+#
+# `armed` is a separate, *continuous* cue layered on top of the
+# rainbow firing border while the stroke is still in progress (the
+# card whose pattern would dispatch if you released right now).
+# Distinct from `fire` (one-shot at button-up); designed to read at
+# a glance without being distracting over a long stroke. Kinds:
+#   "off"      — no extra cue beyond the rainbow border (default)
+#   "pulse"    — gentle scale breathing (~0.6s loop); calm
+#   "glow"     — outer halo pulsing alpha (~0.7s loop)
+#   "shake"    — high-frequency ±1 px tremor; "about to fire"
+#   "sparkle"  — twinkles around the card's perimeter
+#   "marching" — dashed border that scrolls ("marching ants")
+#
+# `line-pets` lists chomp "pets" walking the firing card's
+# outline, chasing each other in array order (first leads, the rest
+# trail at a fixed gap). Mirrors `[tome.decoration].line-pets` on
+# the menu side so both surfaces share a vocabulary. Theme-
+# agnostic — each pet's silhouette is its own colour signature.
+#
+#   "chomp" — yellow chomping wedge
+#   "ghost"   — red Blinky-style ghost (dome + eyes + skirt)
+#
+# Pet sizes scale with `font-size` below so a larger card gets
+# proportionally larger pets.
+[cast.overlay.cards]
+fire = "off"          # the firing card, on button-up
+cancel = "off"        # cards that became unreachable mid-gesture
+armed = "off"         # live cue on the firing card mid-stroke
+line-pets = []        # chomp pets orbiting the firing card
+
+# Card-text base font size in points. The arrow column rides at
+# `font-size + 1` so directional glyphs stay a hair taller than
+# rule names. The card padding is fixed in pt, so a bigger font
+# expands the card naturally rather than just changing typography.
+# Clamped 8..32.
+font-size = 13
+
+# Prepend the target-app icon to the firing card so the row reads
+# `app-icon → rule-icon → name` (or `app-icon → name` for an
+# iconless rule). Same "this fires against THIS app" confirmation
+# the origin badge gives, surfaced on the firing card itself.
+# Candidate (directional) cards keep their existing
+# `arrow → icon → name` layout regardless. When the cursor is over
+# a surface with no resolvable AX target (Desktop / menu bar) the
+# column collapses so the row stays flush against the rule icon.
+fires-app-icon = true
+
+# Card colours (border / body / text / firing-card body & text)
+# live on `[cast].theme` exclusively — pick a theme to change
+# them.
+
+
+# Banner shown at the cursor when the in-progress gesture falls off
+# every reachable rule. Independent of `[cast].theme` — works under
+# any theme (chomp's red wall-flash on no-match is a separate,
+# theme-specific cue and stays under chomp).
+#
+#   "off"       — no banner (default)
+#   "game-over" — arcade-style "GAME OVER" overlay anchored at the
+#                 cursor's upper-right (where the firing card would
+#                 have been). Scale-in pop on first appearance +
+#                 2 Hz blink while the stroke remains off every
+#                 rule. Pairs naturally with `[cast].theme =
+#                 "chomp"` but works under any theme.
+[cast.overlay.no-match]
+kind = "off"
+
+
+# -----------------------------------------------------------------
+# Cast theme — chomp special-theme knobs
+# -----------------------------------------------------------------
+# Only read when `[cast].theme = "chomp"`. Under every other theme
+# this block is ignored (a warning lists the dead keys). Picking
+# chomp as a theme also forces the trail's `style` /
+# `straighten-on-turn` and ignores `[cast.overlay.trail].width`
+# entirely — the arcade aesthetic is "the whole line, locked in",
+# so it gets its own scale knob below instead of mixing into the
+# per-style trail width.
+[cast.chomp]
+
+# Overall scale of the chomp trail. Replaces `width` under this
+# theme.
+#
+#   "s" — compact arcade-pixel-art feel (scale ≈ 2.0)
+#   "m" — calibrated baseline (scale ≈ 3.0)
+#   "l" — chunky / over-the-top (scale ≈ 4.5)
+#
+# Unknown values clamp to "m". Validate with `wand config --validate`.
+size = "m"
+
+
+# -----------------------------------------------------------------
+# Cast fire-moment effects — at the cursor when a rule fires
+# -----------------------------------------------------------------
+# Both sub-blocks live in their own click-through windows, so they
+# fire even when `[cast.overlay].enabled = false`. Disable the
+# trail but keep the burst — or vice versa.
+
+# Particle explosion at the cursor the moment a gesture fires.
+[cast.fire.burst]
+
+#   "off"           — no burst (default)
+#   "burst"         — omnidirectional particle explosion (~0.7s)
+#   "arcade-score"  — arcade Chomp bonus-tile readout: a yellow
+#                     monospaced "+N" floats up from the cursor
+#                     (~40pt over 800ms) and fades. The value is
+#                     picked at random per fire from the eight
+#                     canonical arcade scores (100 / 200 / 300 /
+#                     500 / 700 / 1000 / 2000 / 5000). Works under
+#                     any theme, but pairs naturally with
+#                     `[cast].theme = "chomp"`.
+kind = "off"
+
+# Burst particle colour:
+#   ""         — empty / unset: inherit `[cast.overlay.trail].color`
+#                (also obeys `[cast].theme` palette inheritance)
+#   "trail"    — explicit form of the above
+#   "splatoon" — pick a random hue from the Splatoon ink palette on
+#                every fire
+#   <hex / named> — anything `[cast.overlay.trail].color` accepts
+color = ""
+
+
+# Post-fire ink decal — a Splatoon-style splatter left at the
+# cursor when a gesture fires.
+[cast.fire.decal]
+
+#   "off"           — no decal (default)
+#   "ink-splatter"  — Splatoon-style splat: 2-3 independent splat
+#                     units at random offsets. Each unit is a
+#                     classic SVG ink-splat silhouette with a
+#                     darker ink-ring underlayer + 3-6 detached
+#                     droplet specks. Each unit picks its own team
+#                     colour from a built-in Splatoon ink palette.
+kind = "off"
+
+# How long (ms) the decal stays visible before fading out.
+# Clamped 0..10000. 0 collapses to "off" regardless of `kind` above.
+duration-ms = 3000
+
+# Decal footprint in points (width = height). Clamped 10..500.
+size = 60
+
+
+# -----------------------------------------------------------------
+# Tome — middle-click pops a contextual menu near the cursor
+# -----------------------------------------------------------------
+# Off by default. Set `enabled = true` to install the tome tap
+# alongside the cast tap; both coexist on the same daemon.
+#
+# The tome renders as a non-activating panel that keeps the source
+# app focused: it does NOT take keyboard focus, so the user keeps
+# typing in the underlying app while picking a row with the mouse.
+# Submenus (`group = ["..."]`) open on hover as adjacent child
+# panels. Click outside or press Esc to dismiss. Each
+# `[[tome.cursor.item]]` is one row with the same action-type
+# vocabulary as `[[cast.cursor.rule]]`.
+#
+# The cursor-anchored target is captured at button-down, exactly
+# like the cast path, so the chosen item dispatches against the
+# window you middle-clicked on — not whatever happens to have focus
+# by the time you choose.
+#
+# Two changes that need a daemon restart (the tap is baked into the
+# event mask at install): `enabled = false ↔ true` and `button`.
+# Surfaced in `wand daemon --show` as `pending-restart`.
+[tome]
+enabled = false                # opt-in
+button = "middle"              # "middle" | "side1" | "side2" | "right"
+modifiers = []                 # e.g. ["ctrl"] to require ctrl + middle
+
+# Visual orientation of the panel:
+#   "list"            — vertical rows (default; full feature set)
+#   "toolbar"         — horizontal icon-only buttons (toolbar-style)
+#   "labeled-toolbar" — horizontal icon + label "pill" buttons
+# Toolbar variants ignore `header` / `subtitle` / `separator-before`
+# / `[tome.row].shortcut-badge`; only `.list` shows every feature.
+layout = "list"
+
+# Coordinated colour palette for the tome panel — sets the hover
+# accent, idle row text, AND the panel backdrop. Themes other than
+# "system" REPLACE the system frosted blur with a solid colour.
+# The panel rim is **not** a theme axis — pick
+# `[tome.decoration.border].effect` for an outline. Independent of
+# `[cast].theme` — pair them freely or run different looks per
+# trigger family.
+#
+#   "system"   — frosted-glass system blur, OS control-accent hover,
+#                .labelColor rows (the default)
+#   "terminal" — phosphor green hover (black text) on solid black
+#   "chomp"    — yellow accent on black with yellow rows; pairs with
+#                `[cast].theme = "chomp"` for a coordinated arcade look
+#   "rainbow"  — white rows on deep violet-black, hot-rose hover. Pair
+#                with `[tome.decoration.border].effect = "rainbow"` for the
+#                animated spectrum outline
+#   "cobalt2" / "shades-of-purple" / "tokyo-hack" / "github-dark" /
+#   "dracula" / "catppuccin-mocha" / "gruvbox" / "github-light" /
+#   "catppuccin-latte" — the shared sill catalog (hover <- primary,
+#                rows <- foreground, panel <- background). github-light
+#                and catppuccin-latte are LIGHT themes.
+#
+# wand-only dynamic engine themes (no sill palette):
+#   "neon"     — electric cyan hover on white rows, blue-black backdrop
+#   "splatoon" — Turf-War ink rotation: each row rolls its own random
+#                ink at panel-open and holds it for the panel's life
+#
+#   "random"   — pick a concrete theme at launch
+#
+# Solid-backdrop themes REPLACE the system frosted blur. The panel rim
+# is NOT a theme axis — pick `[tome.decoration.border].effect` for an outline.
+# Independent of `[cast].theme`. Unknown names clamp to "system".
+theme = "system"
+
+
+# Per-row visual conventions that apply uniformly to every
+# `[[tome.cursor.item]]`.
+[tome.row]
+
+# Title font size (points) for every `[[tome.cursor.item]]` row. Scales the
+# row's icon size and height proportionally so a larger font gets a
+# larger panel rather than truncated text. Default 13 matches macOS'
+# menu baseline. Clamped 11..32.
+#
+#   11    — compact (system menu-bar size)
+#   13    — default
+#   16    — comfortable
+#   20    — large (pairs well with `line-pets`)
+font-size = 13
+
+# Auto-display a right-aligned ⌘W-style glyph badge on `.list` rows
+# whose action is `action-type = "key"`. The badge is derived from
+# `action-keys` (`"cmd+shift+t"` → `"⌘⇧T"`) — purely documentation,
+# the row still fires on click as usual. Other action types (ax /
+# shell / url) and toolbar layouts have no badge. Set false to hide
+# every badge globally.
+shortcut-badge = true
+
+# Draw a soft rounded "chip" behind emoji / text-glyph icons so they
+# sit on the same visual footprint as SF Symbol icons. Has no effect
+# on SF Symbol or file-path icons — those already render at a
+# consistent baseline. Set false to fall back to bare glyphs.
+icon-chip = true
+
+
+# Panel open / close animations. Temporal — they play once each
+# transition. Root + child panels animate in parallel so the cascade
+# unwinds together.
+[tome.animation]
+
+# Open animation. Plays when a tome panel pops up (root panel on
+# middle-click; child panels when a folder / dynamic row is hovered
+# open). Default "off" keeps the historical instant pop. Unknown
+# values log + clamp to "off".
+#
+#   "off"   — no animation (default)
+#   "fade"  — alpha 0 → 1 ease-out (~140 ms)
+#   "pop"   — alpha + scale 0.92 → 1.0 ease-out cubic (~180 ms)
+open = "off"
+
+# Symmetric close animation. Mirrors `open` but on the way out —
+# `fade` eases alpha to 0, `pop` adds a scale-down. Default "off".
+close = "off"
+
+
+# Static panel decoration — paints once and stays still. Distinct
+# from `[tome.animation]` (which moves in time). The border rim is its
+# own concern under `[tome.decoration.border]` below.
+[tome.decoration]
+
+# macOS window drop shadow under the panel. Default `false`: macOS
+# draws a thin dark halo just outside any panel with `hasShadow =
+# true`, and that halo reads as an extra fringe on the border
+# decoration. Set `true` to restore the system menu shadow.
+shadow = false
+
+# Chomp "pets" that walk the panel's rounded outline. Default
+# `[]` (no pets). Theme-agnostic — each pet's silhouette is its own
+# colour signature, so they stand alongside any `[tome].theme`.
+# When more than one is listed they chase each other around the rim
+# in array order (first leads, the rest trail at a fixed gap).
+#
+#   "chomp" — classic yellow chomping wedge
+#   "ghost"   — red Blinky-style ghost (dome + eyes + skirt)
+#
+# Pet sizes scale with `[tome.row].font-size` so a larger panel gets
+# proportionally larger pets — the ghost stays readable at any
+# font-size. `outer-margin` is auto-managed to match.
+line-pets = []
+
+
+# Decorative panel border rim — one block, one concern (same shape as
+# facet/halo `[border]` and perch `[overlay.border]`). Inherited by
+# child panels for visual consistency. Independent of `[tome].theme` —
+# mix freely (`theme = "rainbow"` + `effect = "neon"` is fair game).
+[tome.decoration.border]
+
+# Border effect / colour. `"off"` = no border (default).
+#
+#   "rainbow"  — animated hue-rotating outline cycling around the
+#                panel's rounded rect (period via `color-cycle-ms`)
+#   "terminal" — static green rim (#22c55e)
+#   "neon"     — static electric cyan rim (#22d3ee)
+#   "splatoon" — static lime rim (#bfff00)
+#   "mono"     — static white rim
+#   "vapor"    — static synthwave pink rim (#ff79c6)
+#   "chomp"    — static arcade yellow rim (#ffea00)
+effect = "off"
+
+# Cycle period (ms) for any animated `effect` kind — currently only
+# `"rainbow"`. Smaller = faster strobe; larger = slower drift.
+# Static kinds ignore this value. Clamped 500..10000.
+#
+#   500   — strobing (very fast hue churn)
+#   1000  — flicker
+#   4000  — default; smooth visible cycle over a typical panel session
+#   8000  — slow drift, almost-solid feel
+color-cycle-ms = 4000
+
+# Border stroke width in points. Clamped 1..10. Ignored when
+# `effect = "off"`.
+#
+#   1     — hairline (thin rim, very subtle)
+#   2     — default; reads as a clean panel edge
+#   4     — bold ribbon
+#   8+    — chunky / arcade-pixel feel; pairs well with chomp / mono
+width = 2
+
+
+# -----------------------------------------------------------------
+# Items (tome) and rules (cast) — shared field reference
+# -----------------------------------------------------------------
+# Both `[[cast.cursor.rule]]` (and its `[[cast.focused.rule]]`
+# sibling) and `[[tome.cursor.item]]` use the same action-*
+# vocabulary and app-filter syntax. Differences:
+#
+#   [[cast.cursor.rule]]    needs `pattern` (LURD sequence);
+#                           supports optional `icon`
+#   [[cast.focused.rule]]   same shape — fires only on non-AX
+#                           surfaces against the frontmost app
+#   [[tome.cursor.item]]    needs `name` (menu label); supports
+#                           icon / group / separator-before / state /
+#                           dynamic / template-* for richer menu UI
+#
+# Pattern alphabet (cast rules):
+#   L  = left      U  = up
+#   R  = right     D  = down
+# Sequences combine: "DR" = down then right; "URD" = up, right, down.
+#
+# IMPORTANT — cursor-anchored matching:
+#   `apps` matches against the **window under the cursor at
+#   stroke-start / click time**, NOT the focused app. So a gesture
+#   started while pointing at Chrome on display 2 always sees
+#   `*chrome*` even if Finder happens to be focused on display 1.
+#   This is the whole design point of wand.
+#
+# `apps` syntax:
+#   "*"                 — match every bundle id
+#   "com.apple.Safari"  — exact
+#   "*chrome*"          — glob (`*`, `?`)
+#   "!com.apple.dt.Xcode" — exclusion (any matching exclusion wins)
+#
+# Truly global items (`apps = ["*"]` or `apps` omitted) ALSO fire on
+# Dock / menu bar / Desktop — places where no AX target resolves
+# under the cursor. App-specific items there are filtered out.
+#
+# `filter-title = "<glob>"` — optional. Extra gate on top of `apps`,
+# matched against the cursor-anchored target's window title (same
+# `*` / `?` glob).
+#
+#   filter-title = "*github.com*"      # only when title contains "github.com"
+#   filter-title = "*pull/*"            # only on a PR
+#
+# `filter-shell = "<cmd>"` — optional, niche escape hatch when title
+# isn't enough. Evaluated via `/bin/sh -c` with a 100 ms budget;
+# exit 0 = keep the row. Receives the same `WAND_TARGET_*` env vars
+# the action shell does, plus inherited env. Use sparingly — every
+# shell-gated row adds 5-20 ms of menu-open latency.
+#
+#   filter-shell = "test $(date +%H) -ge 17"   # only after 5pm
+#   filter-shell = "scripts/is_github_pr.sh"   # external predicate
+#
+# Activation context — `[[cast.cursor.rule]]` vs
+# `[[cast.focused.rule]]`. By default (the `cursor` namespace), a
+# cast stroke that lands on a non-AX surface (Desktop / Dock /
+# menu bar) is dropped entirely — there's no cursor-anchored
+# target to dispatch to, and the spine refuses to guess. Declaring
+# a row under `[[cast.focused.rule]]` opts that row into the
+# fallback path: it fires ONLY on non-AX surfaces, routed to
+# `NSWorkspace.frontmostApplication` (typically the focused app).
+# `apps` is then matched against the frontmost app's bundle id, so
+# a focused-rule scoped to `apps = ["com.apple.finder"]` only
+# fires when Finder is frontmost — predictable and narrow.
+#
+# The two namespaces are strictly partitioned (not a superset): a
+# rule that should fire in both regimes must be declared in both.
+# Tome items aren't affected — they ship a single
+# `[[tome.cursor.item]]` namespace with its own Desktop-friendly
+# sentinel. A `[[cast.focused.rule]]` with `apps = ["*"]` logs a
+# warning at startup — it's powerful but the trade-off (any
+# frontmost app receives the action) is on you.
+#
+# Action shapes (decomposed across dotted-style keys — the minimal
+# TOML parser doesn't support inline tables):
+#
+#   action-type = "key"    + action-keys = "cmd+w"
+#   action-type = "ax"     + action-verb = "close" | "minimize" |
+#                                            "zoom" | "raise"
+#   action-type = "shell"  + action-cmd  = "open -a Terminal …"
+#   action-type = "url"    + action-url  = "https://github.com"
+#                                          # also handles slack://,
+#                                          # vscode://, file://, …
+#
+# Shell actions receive these env vars describing the target:
+#   WAND_TARGET_BUNDLE_ID, WAND_TARGET_PID,
+#   WAND_TARGET_TITLE,     WAND_TARGET_FRAME (x,y,w,h)
+# Tome items additionally receive:
+#   SELECTION              the text selected in the focused element
+#                          at button-down (empty if none / AX not
+#                          granted). Use for translate / search /
+#                          send-to-app workflows. Untrusted — same
+#                          quoting caveat as WAND_TARGET_TITLE.
+#
+# `icon` (`[[cast.cursor.rule]]` / `[[cast.focused.rule]]` /
+# `[[tome.cursor.item]]`) — optional icon
+# drawn to the left of the rule name (cast) or menu label (tome).
+# Recognised syntax:
+#
+#   icon = "🌐"                  — emoji / 1-2 character text glyph
+#   icon = "SF:globe"            — SF Symbol (macOS 11+; catalog:
+#                                  open Symbols.app)
+#   icon = "app:com.apple.Safari"— installed app icon (any app
+#                                  LaunchServices knows about)
+#   icon = "favicon:github.com"  — website favicon (Google s2 CDN).
+#                                  Cached on disk for 24 h under
+#                                  ~/.cache/wand/favicons/<host>.png.
+#                                  First sight of a host shows the
+#                                  SF:globe placeholder while the
+#                                  fetch lands (~500 ms); subsequent
+#                                  panel opens hit the cache and
+#                                  render instantly. Privacy note:
+#                                  the request goes to Google's
+#                                  s2 endpoint, so the host you
+#                                  reference is visible to Google.
+#   icon = "lucide:<name>"       — Lucide outline icon (e.g.
+#                                  `lucide:trash-2`). Fetched from
+#                                  jsDelivr's npm CDN on first
+#                                  sight, cached under
+#                                  ~/.cache/wand/icon-sets/lucide/.
+#                                  Auto-tints with the row's label
+#                                  colour (template image), so it
+#                                  adapts to light/dark mode.
+#   icon = "phosphor:<name>"     — Phosphor Icons (regular weight,
+#                                  e.g. `phosphor:rocket`). Same
+#                                  CDN-cache flow as `lucide:`.
+#   icon = "tabler:<name>"       — Tabler outline icon. Same flow.
+#   icon = "heroicons:<name>"    — Heroicons 24 px outline. Same flow.
+#   icon = "~/icons/foo.png"     — tilde-expanded path
+#   icon = "icons/foo.png"       — relative to ~/.config/wand/
+#   icon = "/abs/path.png"       — absolute path
+#
+# Unrecognised values fall back to no icon (logged to /tmp/wand.log).
+
+
+# -----------------------------------------------------------------
+# Cast rules — first match wins, applied to the cursor-anchored
+# target. `name` is shown in the overlay while drawing a shape that
+# matches this rule, so you can see what it'll do before releasing
+# — make it human-readable. `icon` is optional and drawn next to
+# the name.
+# -----------------------------------------------------------------
+
+[[cast.cursor.rule]]
+name = "close tab"
+icon = "SF:xmark.square"
+pattern = "DR"
+apps = ["*chrome*", "*safari*"]
+action-type = "key"
+action-keys = "cmd+w"
+
+[[cast.cursor.rule]]
+name = "reopen tab"
+icon = "SF:arrow.uturn.left.square"
+pattern = "UR"
+apps = ["*chrome*", "*safari*"]
+action-type = "key"
+action-keys = "cmd+shift+t"
+
+[[cast.cursor.rule]]
+name = "close window"
+icon = "SF:xmark.circle"
+pattern = "DRU"
+apps = ["*"]
+action-type = "ax"
+action-verb = "close"
+
+[[cast.cursor.rule]]
+name = "minimize"
+icon = "SF:minus.circle"
+pattern = "L"
+apps = ["*"]
+action-type = "ax"
+action-verb = "minimize"
+
+# `[[cast.focused.rule]]` — frontmost-app fallback. Only fires when
+# the stroke lands on a non-AX surface (Desktop / Dock / menu bar);
+# `apps` matches the frontmost app's bundle id. Sample below opens
+# Spotlight when you stroke `R` over the desktop — uncomment to
+# enable.
+#
+# [[cast.focused.rule]]
+# name = "spotlight"
+# icon = "SF:magnifyingglass"
+# pattern = "R"
+# apps = ["*"]
+# action-type = "key"
+# action-keys = "cmd+space"
+
+
+# -----------------------------------------------------------------
+# Tome items — sample blocks below. Uncomment after
+# `[tome].enabled = true`.
+# -----------------------------------------------------------------
+
+# # Basic row:
+# [[tome.cursor.item]]
+# name = "New Tab"
+# icon = "🌐"
+# apps = ["*chrome*", "*safari*"]
+# action-type = "key"
+# action-keys = "cmd+t"
+#
+# # Separator before this row + SF Symbol icon:
+# [[tome.cursor.item]]
+# name = "Reload"
+# icon = "SF:arrow.clockwise"
+# apps = ["*chrome*", "*safari*"]
+# separator-before = true
+# action-type = "key"
+# action-keys = "cmd+r"
+#
+# # Subtitle — a 2nd line of muted text below the title. Useful to
+# # explain what an opaque `shell` action does, or to disambiguate two
+# # identically-named items. Empty subtitle keeps the single-line row
+# # height. Only renders in list layout (toolbar variants ignore it).
+# # `{line}` substitution works on dynamic-item templates too.
+# [[tome.cursor.item]]
+# name = "Translate"
+# subtitle = "選択テキストを日本語へ"
+# icon = "SF:globe"
+# action-type = "shell"
+# action-cmd  = "echo $SELECTION | translate --to ja"
+#
+# # App icon — `icon = "app:<bundle-id>"` pulls the actual icon of an
+# # installed app (running OR installed-but-inactive).
+# [[tome.cursor.item]]
+# name = "Open Chrome"
+# icon = "app:com.google.Chrome"
+# action-type = "shell"
+# action-cmd  = "open -na 'Google Chrome'"
+#
+# # Tint — palette-colour an SF Symbol icon. Same colour grammar as
+# # the trail's `color`: named ("systemRed" / "red" / "orange" / …,
+# # "accent" for the system accent), or hex.
+# [[tome.cursor.item]]
+# name = "Move to Trash"
+# icon = "SF:trash"
+# tint = "systemRed"
+# action-type = "ax"
+# action-verb = "AXDelete"
+#
+# # Multi-colour palette — `tint-colors = [...]` applies SF Symbol's
+# # hierarchical / multicolor palette. Wins over a single `tint`.
+# [[tome.cursor.item]]
+# name = "Battery Low"
+# icon = "SF:battery.25.fill"
+# tint-colors = ["red", "orange"]
+# action-type = "shell"
+# action-cmd  = "open 'x-apple.systempreferences:com.apple.preference.battery'"
+#
+# # Icon animation (macOS 14+) — `icon-anim` fires an SF Symbol effect
+# # on the icon when the row is hovered. Supported: "bounce" / "pulse".
+# [[tome.cursor.item]]
+# name = "Notifications"
+# icon = "SF:bell.fill"
+# icon-anim = "bounce"
+# action-type = "url"
+# action-url  = "x-apple.systempreferences:com.apple.preference.notifications"
+#
+# # Nested submenu — `group = ["..."]` is the path to the parent
+# # submenu. The folder is created on first reference; subsequent
+# # items with the same group land inside it.
+# [[tome.cursor.item]]
+# name = "By Name"
+# group = ["Sort"]
+# action-type = "shell"
+# action-cmd = "echo name"
+#
+# # Inline section header — `header = "..."` draws a small-caps band
+# # above any item whose `header` value differs from the previous
+# # one's. Items with empty `header` inherit the current section.
+# [[tome.cursor.item]]
+# header = "Editing"
+# name = "Copy"
+# icon = "SF:doc.on.doc"
+# action-type = "key"
+# action-keys = "cmd+c"
+#
+# # Dynamic items — the parent is a submenu populated at every menu
+# # open by running `dynamic` (shell) and emitting one child per
+# # stdout line. `{line}` in any `template-*` field is substituted
+# # with the line content. Killed after 500ms if the shell hangs.
+# #
+# # SECURITY: `{line}` carries untrusted text. When the line ends up
+# # in a shell command, quote it: 'git switch "{line}"', not
+# # 'git switch {line}'.
+# [[tome.cursor.item]]
+# name = "Switch Branch"
+# icon = "SF:point.3.connected.trianglepath.dotted"
+# dynamic = 'cd ~/repo && git branch --format="%(refname:short)"'
+# template-name = "{line}"
+# template-icon = "SF:arrow.triangle.branch"
+# template-action-type = "shell"
+# template-action-cmd  = 'cd ~/repo && git switch "{line}"'
+#
+# # Checkmark / radio state — `state` decorates a row with macOS's
+# # native ✓ / dash indicator. Static values: "on" / "off" / "mixed".
+# # Dynamic: "shell:<cmd>" → evaluated at menu-open, exit 0 → ✓.
+# # 100ms timeout (state should be a cheap check).
+# [[tome.cursor.item]]
+# name = "Dark Mode"
+# state = "shell:defaults read -g AppleInterfaceStyle 2>/dev/null | grep -q Dark"
+# action-type = "shell"
+# action-cmd  = "osascript -e 'tell app \"System Events\" to keystroke \"d\" using {control down, option down, command down}'"

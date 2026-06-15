@@ -1,0 +1,9 @@
+# Thin caller of the family reusable gitmoji + Conventional Commits linter.
+# Kept because git-cliff (release notes) derives from these commits, so the
+# convention must hold here too.
+name: Commit lint
+on:
+  pull_request:
+jobs:
+  lint:
+    uses: akira-toriyama/.github/.github/workflows/commit-lint.yml@main
