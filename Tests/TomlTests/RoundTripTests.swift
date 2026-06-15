@@ -187,6 +187,7 @@ import Foundation
 
         top = 1
 
+        # the border section
         [border]
         effect = "neon"
 
@@ -206,8 +207,10 @@ import Foundation
         #expect(doc.blocks[1].kind == .arrayElement)
         #expect(doc.blocks[1].path == ["exclude"])
         #expect(doc.blocks[2].kind == .arrayElement)
-        // the [border] banner attaches to its block (moves with it)
-        #expect(doc.blocks[0].leading.contains("\n"))
+        // the comment banner attaches to [border] (moves with it on edit); the
+        // blank-line separator before it stayed with the previous block.
+        #expect(doc.blocks[0].leading == "# the border section\n")
+        #expect(doc.root.trailing.contains("\n"))
         // entry value decode on demand
         #expect(doc.blocks[0].body.entry(forKey: "effect")?.value == .string("neon"))
     }

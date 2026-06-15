@@ -27,22 +27,42 @@ public extension Toml.Annotated {
         var blocks: [Block] = []
         var pending = ""                  // trivia accumulated since last content
 
-        // Flush `pending` as the leading trivia of the content token now being
-        // emitted: the first token sends it to the document `leading`
-        // (file header / pragma — never moves); later tokens own it as a banner.
-        func takeLeading() -> String {
-            defer { pending = "" }
-            if !sawContent {
-                leading = pending
-                sawContent = true
-                return ""
-            }
-            return pending
-        }
-
         func appendEntry(_ e: Entry) {
             if blocks.isEmpty { root.entries.append(e) }
             else { blocks[blocks.count - 1].body.entries.append(e) }
+        }
+
+        // Append trailing trivia to whichever body is currently open (the
+        // root, or the last block's body).
+        func appendTrailing(_ s: String) {
+            guard !s.isEmpty else { return }
+            if blocks.isEmpty { root.trailing += s }
+            else { blocks[blocks.count - 1].body.trailing += s }
+        }
+
+        // For a key/value: all pending trivia becomes its leading (entries are
+        // not reordered, so no split is needed). The first content token sends
+        // its pending to the document `leading` (pragma / file header — never
+        // moves).
+        func takeEntryLeading() -> String {
+            defer { pending = "" }
+            if !sawContent { leading = pending; sawContent = true; return "" }
+            return pending
+        }
+
+        // For a header: split pending so blank-line SEPARATORS stay with the
+        // PREVIOUS block (as its body.trailing) and only the comment BANNER
+        // immediately above this header becomes its leading. That way
+        // reorder / delete carry each element's own banner while the blank-line
+        // separators stay uniform (the wand#129 rule, refined for clean edits).
+        // Round-trip is unaffected — render concatenates trailing + leading in
+        // source order regardless of where the split falls.
+        func takeBlockLeading() -> String {
+            defer { pending = "" }
+            if !sawContent { leading = pending; sawContent = true; return "" }
+            let (trailing, banner) = Toml.splitTrivia(pending)
+            appendTrailing(trailing)
+            return banner
         }
 
         var i = 0
@@ -78,7 +98,7 @@ public extension Toml.Annotated {
                     inner = trimmed.dropFirst().dropLast()
                 }
                 let path = Toml.lexDottedPath(inner.trimmingCharacters(in: .whitespaces))
-                let block = Block(leading: takeLeading(), kind: kind,
+                let block = Block(leading: takeBlockLeading(), kind: kind,
                                   headerRaw: text + term, path: path, body: Body())
                 blocks.append(block)
                 continue
@@ -102,17 +122,14 @@ public extension Toml.Annotated {
             let keyText = String(code[..<eq]).trimmingCharacters(in: .whitespaces)
             let key = Toml.lexDottedPath(keyText)
             let valueText = valuePortion.trimmingCharacters(in: .whitespacesAndNewlines)
-            appendEntry(Entry(leading: takeLeading(), raw: raw, key: key, valueText: valueText))
+            appendEntry(Entry(leading: takeEntryLeading(), raw: raw, key: key, valueText: valueText))
         }
 
-        // Trivia left at EOF: the document's leading (if no content at all) or
-        // the trailing of the final body (the only body that can carry one).
-        if !sawContent {
-            leading = pending
-        } else if !pending.isEmpty {
-            if blocks.isEmpty { root.trailing = pending }
-            else { blocks[blocks.count - 1].body.trailing = pending }
-        }
+        // Trivia left at EOF: the document's leading (if there was no content
+        // at all) or the trailing of the final body. Nothing follows it, so it
+        // is not split.
+        if !sawContent { leading = pending }
+        else { appendTrailing(pending) }
 
         self.init(leading: leading, root: root, blocks: blocks)
     }
@@ -155,6 +172,29 @@ extension Toml {
         }
         if start < scalars.count { out.append((slice(start, scalars.count), "")) }
         return out
+    }
+
+    /// Split a run of trivia (the lines between two content tokens) into the
+    /// part that belongs to the PRECEDING block (everything up to and
+    /// including the last blank line — the separator) and the comment BANNER
+    /// directly above the FOLLOWING header (the run of comment lines after the
+    /// last blank, with no intervening blank). With no blank line the whole run
+    /// is the banner; with no comment after the last blank the banner is empty.
+    static func splitTrivia(_ pending: String) -> (trailing: String, leading: String) {
+        if pending.isEmpty { return ("", "") }
+        let lines = lexLines(pending)
+        var lastBlank = -1
+        for (idx, line) in lines.enumerated()
+        where line.text.trimmingCharacters(in: .whitespaces).isEmpty {
+            lastBlank = idx
+        }
+        if lastBlank < 0 { return ("", pending) }   // no separator → all banner
+        var trailing = "", banner = ""
+        for (idx, line) in lines.enumerated() {
+            if idx <= lastBlank { trailing += line.text + line.term }
+            else { banner += line.text + line.term }
+        }
+        return (trailing, banner)
     }
 
     /// Strip an unquoted `#` comment to end of line, quote- AND escape-aware
