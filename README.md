@@ -17,10 +17,41 @@ preserved.
 
 ## Status
 
-Pre-1.0 and under active development. The 1.0 bar is **full TOML 1.0
-round-trip**, verified by the official
-[`toml-test`](https://github.com/toml-lang/toml-test) conformance suite plus an
-in-repo byte-identity corpus. Until then the API may move.
+The 1.0 bar — **full TOML 1.0 round-trip** — is **met**: the library passes the
+entire official [`toml-test`](https://github.com/toml-lang/toml-test) 1.0.0 suite
+in **both directions** (decoder and encoder), and a byte-identity corpus +
+generative fuzzer guard the round-trip invariant on top. The public API is
+settling for a 1.0 tag; minor surface may still move until then.
+
+## Usage
+
+```swift
+import Toml
+
+// Parse into the lossless DOM, edit, and write back — unchanged bytes stay byte-
+// for-byte identical; only the edited block re-renders.
+let doc = try Toml.Annotated(parsing: source)
+let reordered = doc.reorderingArrayOfTables(at: ["server"], [1, 0])
+let out = reordered.render()          // comments / spacing / quoting preserved
+
+// Just want the values? Use the lossy projection.
+let flat = Toml.parseFlat(source)
+let port = flat.tables["server"]?["port"]?.asInt
+
+// Need fully-typed values (the four datetime kinds, exact integers, …)?
+let typed = try doc.typedTree()       // a Toml.TypedValue tree
+```
+
+## Conformance
+
+Verified against the official `toml-test` v2.2.0 runner, pinned to TOML 1.0.0
+(`scripts/conformance.sh`, and gated in CI):
+
+| direction | result |
+|-----------|--------|
+| decoder — valid   | 205 / 205 |
+| decoder — invalid | 474 / 474 rejected |
+| encoder           | 205 / 205 |
 
 ## Why
 
@@ -32,7 +63,7 @@ option. See `CLAUDE.md` for the design and invariants.
 ## Install
 
 ```swift
-.package(url: "https://github.com/akira-toriyama/swift-toml-edit", from: "0.1.0")
+.package(url: "https://github.com/akira-toriyama/swift-toml-edit", from: "1.0.0")
 ```
 
 ```swift
