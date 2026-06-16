@@ -61,6 +61,74 @@ public extension Toml.TypedValue {
 }
 
 extension Toml {
+    /// The eight toml-test scalar type tags.
+    static let scalarTags: Set<String> = [
+        "string", "integer", "float", "bool",
+        "datetime", "datetime-local", "date-local", "time-local",
+    ]
+
+    /// Parse toml-test tagged JSON (the ENCODER input) into a `TypedValue`. A
+    /// 2-key object `{type, value}` whose values are STRINGS and whose `type` is
+    /// a known tag is a scalar; any other object is a table; an array is an
+    /// array. Scalar value strings are re-parsed by the strict decoder, so a tag
+    /// and its literal can never disagree.
+    public static func decodeTaggedJSON(_ data: Data) throws -> TypedValue {
+        let obj = try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
+        return try fromJSON(obj)
+    }
+
+    private static func fromJSON(_ j: Any) throws -> TypedValue {
+        if let dict = j as? [String: Any] {
+            if dict.count == 2,
+               let type = dict["type"] as? String,
+               let value = dict["value"] as? String,
+               scalarTags.contains(type) {
+                return try scalarFromTag(type, value)
+            }
+            var out: [(key: String, value: TypedValue)] = []
+            for (k, v) in dict { out.append((k, try fromJSON(v))) }
+            return .table(out)
+        }
+        if let arr = j as? [Any] {
+            return .array(try arr.map(fromJSON))
+        }
+        throw ParseError(line: 0, message: "unexpected JSON node in tagged input")
+    }
+
+    private static func scalarFromTag(_ type: String, _ value: String) throws -> TypedValue {
+        switch type {
+        case "string": return .string(value)
+        case "bool":
+            if value == "true" { return .boolean(true) }
+            if value == "false" { return .boolean(false) }
+            throw ParseError(line: 0, message: "invalid bool value '\(value)'")
+        case "integer":
+            // The .json uses decimal spelling; fall back to the strict decoder
+            // for any radix-prefixed form.
+            if let i = Int64(value) { return .integer(i) }
+            if case .integer(let i) = try decodeStrict(value) { return .integer(i) }
+            throw ParseError(line: 0, message: "invalid integer value '\(value)'")
+        case "float":
+            // The tag is authoritative: a float value may be integer-SHAPED
+            // ("0", "9007199254740991"), which the shape-inferring decoder would
+            // read as an int — so parse it as a Double here.
+            switch value {
+            case "inf", "+inf":        return .float(.infinity)
+            case "-inf":               return .float(-.infinity)
+            case "nan", "+nan", "-nan": return .float(.nan)
+            default:
+                guard let d = Double(value) else {
+                    throw ParseError(line: 0, message: "invalid float value '\(value)'")
+                }
+                return .float(d)
+            }
+        default:
+            // datetime kinds: the value is a TOML datetime literal — reuse the
+            // strict decoder so it lands in the right one of the four cases.
+            return try decodeStrict(value)
+        }
+    }
+
     /// Append a JSON string literal (quotes + minimal escaping) for `v`.
     static func jsonString(_ v: String, _ s: inout String) {
         s += "\""
@@ -90,7 +158,12 @@ extension Toml {
     static func canonicalFloat(_ d: Double) -> String {
         if d.isNaN { return "nan" }
         if d.isInfinite { return d < 0 ? "-inf" : "inf" }
-        return String(d)
+        var s = String(d)
+        // `String(Double)` drops the decimal point for large whole-valued
+        // doubles (e.g. 9007199254740991.0 → "9007199254740991"), which would
+        // read back as an INTEGER. A TOML float must carry a `.` or exponent.
+        if !s.contains(where: { $0 == "." || $0 == "e" || $0 == "E" }) { s += ".0" }
+        return s
     }
 
     static func render(_ d: Toml.LocalDate) -> String {

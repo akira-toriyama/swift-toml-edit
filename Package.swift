@@ -35,6 +35,7 @@ let package = Package(
         // TOML document on stdin and expects tagged JSON on stdout (or a
         // non-zero exit for invalid input). See scripts/conformance.sh + CI.
         .executable(name: "toml-decode", targets: ["toml-decode"]),
+        .executable(name: "toml-encode", targets: ["toml-encode"]),
     ],
     targets: [
         // The library: lossless `Annotated` DOM + functional edit ops
@@ -45,6 +46,9 @@ let package = Package(
 
         // toml-test decoder binary (stdin TOML → tagged JSON / nonzero exit).
         .executableTarget(name: "toml-decode", dependencies: ["Toml"]),
+
+        // toml-test encoder binary (stdin tagged JSON → TOML / nonzero exit).
+        .executableTarget(name: "toml-encode", dependencies: ["Toml"]),
 
         // Unit + golden tests. `Fixtures/` holds the family's real configs
         // (perch/wand/chord/facet/halo + still) for round-trip byte-identity
