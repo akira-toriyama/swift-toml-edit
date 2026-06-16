@@ -117,7 +117,9 @@ extension Toml {
             case "-inf":               return .float(-.infinity)
             case "nan", "+nan", "-nan": return .float(.nan)
             default:
-                guard let d = Double(value) else {
+                // A finite literal that overflows binary64 parses to `inf`;
+                // reject it (the inf/nan specials are handled above).
+                guard let d = Double(value), !d.isInfinite else {
                     throw ParseError(line: 0, message: "invalid float value '\(value)'")
                 }
                 return .float(d)

@@ -76,6 +76,26 @@ extension Toml {
         }
     }
 
+    /// Whether the accumulated value source ENDS inside an unterminated
+    /// multi-line string — so the next physical line is string body (validated
+    /// by the string decoder), not code/comment. Used to decide whether a
+    /// continuation line's `#` comment should be control-char-validated.
+    static func lexInOpenMultilineString(_ a: [Unicode.Scalar]) -> Bool {
+        var i = 0
+        while i < a.count {
+            let c = a[i]
+            if c == "#" { while i < a.count && a[i] != "\n" { i += 1 }; continue }
+            if c == "\"" || c == "'" {
+                let (next, closed, multiline) = lexScanQuoted(a, i)
+                if multiline && !closed { return true }
+                i = next
+                continue
+            }
+            i += 1
+        }
+        return false
+    }
+
     /// Whether a value's accumulated source (which may already span physical
     /// lines, newlines included) is still OPEN — i.e. the parser must pull
     /// another physical line. Open while a `[`/`{` is unbalanced OR a multi-line
@@ -204,11 +224,24 @@ extension Toml {
         return Toml.asciiTrim(String(out))
     }
 
-    /// Trim leading/trailing ASCII space, tab, CR and LF only.
+    /// Trim leading/trailing ASCII space, tab, CR and LF only. Used to trim the
+    /// newline-bounded edges of a (possibly multi-line) VALUE source.
     static func asciiTrim(_ s: String) -> String {
         var a = Array(s.unicodeScalars)
         while let f = a.first, f == " " || f == "\t" || f == "\n" || f == "\r" { a.removeFirst() }
         while let l = a.last, l == " " || l == "\t" || l == "\n" || l == "\r" { a.removeLast() }
+        return String(String.UnicodeScalarView(a))
+    }
+
+    /// Trim leading/trailing ASCII space and tab ONLY — the exact TOML inline
+    /// whitespace set. Used for blank-line / header classification, where a CR
+    /// or LF surviving in a physical line's text (lexLines strips the real
+    /// terminator) is a STRAY control char, not whitespace, so the line must NOT
+    /// count as blank (e.g. a lone-CR line is invalid, not trivia).
+    static func asciiSpaceTrim(_ s: String) -> String {
+        var a = Array(s.unicodeScalars)
+        while let f = a.first, f == " " || f == "\t" { a.removeFirst() }
+        while let l = a.last, l == " " || l == "\t" { a.removeLast() }
         return String(String.UnicodeScalarView(a))
     }
 

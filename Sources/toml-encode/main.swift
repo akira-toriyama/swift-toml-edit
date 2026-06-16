@@ -13,7 +13,7 @@ let data = FileHandle.standardInput.readDataToEndOfFile()
 
 do {
     let value = try Toml.decodeTaggedJSON(data)
-    let toml = value.serializeDocument()
+    let toml = try value.serializeDocument()
     FileHandle.standardOutput.write(Data(toml.utf8))
     exit(0)
 } catch {

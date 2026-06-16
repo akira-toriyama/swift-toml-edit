@@ -146,15 +146,16 @@ extension Toml {
             case nil:
                 sub = TreeTable(kind: .dotted); put(head, .table(sub))
             case .table(let t):
-                // A dotted key may only EXTEND a table that a sibling dotted key
-                // created in the same scope (kind `.dotted`). It may NOT reach
-                // into a table defined by a header (`.header`) or its implicit
-                // super-tables (`.implicit`) — e.g. `[a.b.c]` then `[a]` then
-                // `b.c.t = …` — nor into an inline table.
+                // A dotted key may extend a table created by a sibling dotted
+                // key (`.dotted`) OR an implicit super-table (`.implicit`, e.g.
+                // adding `b.a` under the implicit `b` of a prior `[a.b.c]`). It
+                // may NOT reach into a table explicitly defined by a `[header]`
+                // (`[a.b.c]` then `[a]` then `b.c.t = …` is invalid) nor into an
+                // inline table.
                 switch t.kind {
-                case .dotted: sub = t
+                case .dotted, .implicit: sub = t
                 case .inline: throw fail("cannot extend inline table '\(head)'")
-                case .header, .implicit:
+                case .header:
                     throw fail("cannot extend table '\(head)' with a dotted key")
                 }
             case .aot:  throw fail("cannot extend array of tables '\(head)' with a dotted key")

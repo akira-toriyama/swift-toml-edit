@@ -76,7 +76,12 @@ public extension Toml.Annotated {
 
             try Toml.lexValidateComment(text, line: lineNo)
             let code = Toml.lexStripComment(text)
-            let trimmed = code.trimmingCharacters(in: .whitespaces)
+            // Trim only ASCII space/tab (the TOML whitespace set): a line made
+            // solely of NON-ASCII Unicode whitespace (U+00A0, U+3000, …) or a
+            // stray CR is NOT blank — it must fall through and be rejected, not
+            // swallowed as trivia (Foundation's `.whitespaces` strips the former,
+            // `.whitespacesAndNewlines` the latter).
+            let trimmed = Toml.asciiSpaceTrim(code)
 
             // --- trivia: blank line or comment-only line ---
             if trimmed.isEmpty {
@@ -131,6 +136,13 @@ public extension Toml.Annotated {
             }
             while Toml.lexValueOpen(valueSource()) && i < lines.count {
                 let (ctext, cterm) = lines[i]
+                // Validate a continuation line's comment for control chars too —
+                // but ONLY when this line is code (a multi-line array / inline
+                // table), not the interior of an open multi-line string (where a
+                // `#` is string body, validated by the decoder).
+                if !Toml.lexInOpenMultilineString(valueSource()) {
+                    try Toml.lexValidateComment(ctext, line: i + 1)
+                }
                 i += 1
                 raw += ctext + cterm
             }
@@ -200,7 +212,7 @@ extension Toml {
         let lines = lexLines(pending)
         var lastBlank = -1
         for (idx, line) in lines.enumerated()
-        where line.text.trimmingCharacters(in: .whitespaces).isEmpty {
+        where Toml.asciiSpaceTrim(line.text).isEmpty {
             lastBlank = idx
         }
         if lastBlank < 0 { return ("", pending) }   // no separator → all banner

@@ -131,7 +131,7 @@ struct StrictParser {
                     throw err("invalid/reserved escape '\\\(Character(e))'")
                 }
             } else {
-                try validateRaw(ch, multiline: multiline)
+                try validateRaw(ch, multiline: multiline, next: k + 1 < c.count ? c[k + 1] : nil)
                 out.append(ch); k += 1
             }
         }
@@ -144,8 +144,9 @@ struct StrictParser {
         var c = raw
         if multiline { c = trimLeadingNewline(c) }
         var out = String.UnicodeScalarView()
-        for ch in c {
-            try validateRaw(ch, multiline: multiline, literal: true)
+        for (idx, ch) in c.enumerated() {
+            try validateRaw(ch, multiline: multiline, literal: true,
+                            next: idx + 1 < c.count ? c[idx + 1] : nil)
             out.append(ch)
         }
         return String(out)
@@ -185,10 +186,14 @@ struct StrictParser {
         k = j
     }
 
-    private func validateRaw(_ ch: Unicode.Scalar, multiline: Bool, literal: Bool = false) throws {
+    private func validateRaw(_ ch: Unicode.Scalar, multiline: Bool, literal: Bool = false,
+                             next: Unicode.Scalar? = nil) throws {
         let v = ch.value
         if v == 0x09 { return }                              // tab is always allowed
-        if multiline, v == 0x0A || v == 0x0D { return }      // newlines only in multi-line
+        if multiline {
+            if v == 0x0A { return }                          // LF is a newline
+            if v == 0x0D, next == "\n" { return }            // CR only as part of CRLF
+        }
         if v <= 0x08 || (v >= 0x0A && v <= 0x1F) || v == 0x7F {
             throw err("raw control character U+\(String(format: "%04X", v)) must be escaped")
         }
@@ -385,7 +390,12 @@ struct StrictParser {
             guard !ed.isEmpty else { throw err("float exponent needs a digit '\(tok)'") }
             normalized += "e" + esign + ed       // exponent MAY have leading zeros
         }
-        guard let d = Double(normalized) else { throw err("invalid float '\(tok)'") }
+        // A finite literal that overflows binary64 (`1e400`) parses to `inf`
+        // rather than nil — reject it (the `inf`/`nan` specials were handled
+        // earlier, so genuine infinities never reach here).
+        guard let d = Double(normalized), !d.isInfinite else {
+            throw err("float out of range '\(tok)'")
+        }
         return d
     }
 

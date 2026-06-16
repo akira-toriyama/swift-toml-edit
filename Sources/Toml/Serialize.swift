@@ -11,11 +11,13 @@
 // entirely while remaining spec-valid.
 
 public extension Toml.TypedValue {
-    /// Serialize a document (this must be a `.table`) to TOML.
-    func serializeDocument() -> String {
+    /// Serialize a document (this must be a `.table`) to TOML. Throws if the top
+    /// level is not a table (a scalar / array root is not a TOML document — the
+    /// encoder must reject it, distinct from a legitimately empty table `{}`,
+    /// which serializes to "").
+    func serializeDocument() throws -> String {
         guard case .table(let kvs) = self else {
-            // A non-table top level isn't a valid TOML document; emit nothing.
-            return ""
+            throw Toml.ParseError(line: 0, message: "top-level value is not a table; cannot encode as a TOML document")
         }
         var out = ""
         for (key, value) in kvs {

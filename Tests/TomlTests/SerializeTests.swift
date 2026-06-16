@@ -12,7 +12,7 @@ import Foundation
     /// tagged JSON string → TypedValue → TOML, then re-decode and compare.
     private func roundTrip(_ json: String, _ loc: SourceLocation = #_sourceLocation) throws -> Toml.TypedValue {
         let value = try Toml.decodeTaggedJSON(Data(json.utf8))
-        let toml = value.serializeDocument()
+        let toml = try value.serializeDocument()
         return try Toml.Annotated(parsing: toml).typedTree()
     }
 
