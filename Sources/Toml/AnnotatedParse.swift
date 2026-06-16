@@ -74,6 +74,7 @@ public extension Toml.Annotated {
             let lineNo = i + 1
             i += 1
 
+            try Toml.lexValidateComment(text, line: lineNo)
             let code = Toml.lexStripComment(text)
             let trimmed = code.trimmingCharacters(in: .whitespaces)
 
@@ -100,7 +101,7 @@ public extension Toml.Annotated {
                     kind = .table
                     inner = trimmed.dropFirst().dropLast()
                 }
-                let path = Toml.lexDottedPath(inner.trimmingCharacters(in: .whitespaces))
+                let path = try Toml.lexDottedPathStrict(String(inner), line: lineNo)
                 let block = Block(leading: takeBlockLeading(), kind: kind,
                                   headerRaw: text + term, path: path, body: Body())
                 blocks.append(block)
@@ -114,8 +115,7 @@ public extension Toml.Annotated {
                 throw Toml.ParseError(line: lineNo, message: "expected '=' in '\(trimmed)'")
             }
             let keyText = String(String.UnicodeScalarView(codeScalars[0..<eqOffset]))
-                .trimmingCharacters(in: .whitespaces)
-            let key = Toml.lexDottedPath(keyText)
+            let key = try Toml.lexDottedPathStrict(keyText, line: lineNo)
 
             // The value source is everything in `raw` after the `=`. `code`'s
             // prefix up to the value equals `raw`'s (comment-stripping only
@@ -238,15 +238,11 @@ extension Toml {
         return segs.map { Toml.lexUnquoteKey($0.trimmingCharacters(in: .whitespaces)) }
     }
 
-    /// Strip a matching surrounding quote pair from a key segment.
+    /// Resolve a key segment's quoting: strip a literal `'…'` pair verbatim,
+    /// decode a basic `"…"` pair's escapes, leave a bare key as-is — so a quoted
+    /// key and its decoded form are one identity (`Toml.decodeKeySegment`).
     static func lexUnquoteKey(_ raw: String) -> String {
-        if raw.count >= 2 {
-            let f = raw.first!, l = raw.last!
-            if (f == "\"" && l == "\"") || (f == "'" && l == "'") {
-                return String(raw.dropFirst().dropLast())
-            }
-        }
-        return raw
+        Toml.decodeKeySegment(raw)
     }
 
     /// Decode a value's raw spelling into the lossy `Toml.Value` on demand

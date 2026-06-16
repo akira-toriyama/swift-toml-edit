@@ -61,3 +61,26 @@ jobs:
         run: swift build -c release
       - name: Test
         run: swift test
+
+  # ---- Official toml-test conformance (the correctness gate that makes this
+  #      a real OSS TOML library). Runner is a Go program embedding the corpus;
+  #      pinned to v2.2.0 for reproducibility and to TOML 1.0.0 on every run
+  #      (v2 defaults to 1.1, whose draft tests a 1.0 parser must reject). ----
+  conformance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container: swift:6.0
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+      - name: Install toml-test (pinned)
+        run: go install github.com/toml-lang/toml-test/v2/cmd/toml-test@v2.2.0
+      - name: Build conformance binary (release)
+        run: swift build -c release --product toml-decode
+      - name: Decoder conformance (TOML 1.0.0)
+        run: |
+          "$(go env GOPATH)/bin/toml-test" test -toml=1.0 \
+            -decoder="$PWD/.build/release/toml-decode"

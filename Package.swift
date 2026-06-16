@@ -31,12 +31,20 @@ let package = Package(
     ],
     products: [
         .library(name: "Toml", targets: ["Toml"]),
+        // The official toml-test conformance harness drives this: it pipes a
+        // TOML document on stdin and expects tagged JSON on stdout (or a
+        // non-zero exit for invalid input). See scripts/conformance.sh + CI.
+        .executable(name: "toml-decode", targets: ["toml-decode"]),
     ],
     targets: [
         // The library: lossless `Annotated` DOM + functional edit ops
         // (reorderingArrayOfTables / removing) + lossy parse/parseFlat
-        // projection. Pure, Sendable, zero-dep.
+        // projection + the strict typed decoder (`decodeStrict` / `TypedValue`)
+        // backing toml-test conformance. Pure, Sendable, zero-dep.
         .target(name: "Toml"),
+
+        // toml-test decoder binary (stdin TOML → tagged JSON / nonzero exit).
+        .executableTarget(name: "toml-decode", dependencies: ["Toml"]),
 
         // Unit + golden tests. `Fixtures/` holds the family's real configs
         // (perch/wand/chord/facet/halo + still) for round-trip byte-identity

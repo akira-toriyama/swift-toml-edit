@@ -145,6 +145,35 @@ extension Toml {
         return String(out)
     }
 
+    /// Validate that a line's `#` comment (if any) contains no raw control
+    /// characters other than tab — TOML 1.0 forbids control chars (U+0000–08,
+    /// U+000A–1F, U+007F) in comments. String-aware so a `#` inside a string is
+    /// not treated as a comment. Throws `Toml.ParseError` on a bad byte.
+    static func lexValidateComment(_ s: String, line: Int) throws {
+        let a = Array(s.unicodeScalars)
+        var i = 0
+        while i < a.count {
+            let c = a[i]
+            if c == "\"" || c == "'" {
+                let (next, _, _) = lexScanQuoted(a, i)
+                i = next
+                continue
+            }
+            if c == "#" {
+                for j in (i + 1)..<a.count {
+                    let v = a[j].value
+                    if v == 0x09 { continue }                  // tab allowed
+                    if v <= 0x08 || (v >= 0x0A && v <= 0x1F) || v == 0x7F {
+                        throw Toml.ParseError(line: line,
+                            message: "control character U+\(String(format: "%04X", v)) in comment")
+                    }
+                }
+                return
+            }
+            i += 1
+        }
+    }
+
     /// The value text the lossy decode reads: the value source with inline `#`
     /// comments removed (string-aware, per physical line) but interior newlines
     /// and string bodies preserved, then whitespace-trimmed. Newlines are kept
@@ -168,6 +197,78 @@ extension Toml {
             out.append(c)
             i += 1
         }
-        return String(out).trimmingCharacters(in: .whitespacesAndNewlines)
+        // Trim only ASCII space / tab / newline — NOT U+000B/U+000C, which
+        // `.whitespacesAndNewlines` would also strip, masking a raw vertical-tab
+        // / form-feed control char that TOML forbids (the strict decoder must
+        // see e.g. `1\u{0B}` and reject it on the trailing-character check).
+        return Toml.asciiTrim(String(out))
+    }
+
+    /// Trim leading/trailing ASCII space, tab, CR and LF only.
+    static func asciiTrim(_ s: String) -> String {
+        var a = Array(s.unicodeScalars)
+        while let f = a.first, f == " " || f == "\t" || f == "\n" || f == "\r" { a.removeFirst() }
+        while let l = a.last, l == " " || l == "\t" || l == "\n" || l == "\r" { a.removeLast() }
+        return String(String.UnicodeScalarView(a))
+    }
+
+    /// Strict dotted-key / header-path parse: split on top-level dots
+    /// (string-aware), then validate AND decode each segment — a bare key is
+    /// ASCII `[A-Za-z0-9_-]+`, a quoted key is a SINGLE-line basic/literal
+    /// string (escapes decoded for basic), and nothing else. Throws on an empty
+    /// segment (`.`, `a.`, `a..b`), a bare key with a disallowed character, a
+    /// multi-line (`"""`) key, trailing junk after a quoted segment, or a bad
+    /// escape. This is the conformance-grade key grammar; the lenient
+    /// `lexDottedPath` remains for library-side lookups.
+    static func lexDottedPathStrict(_ s: String, line: Int) throws -> [String] {
+        let a = Array(s.unicodeScalars)
+        var rawSegs: [[Unicode.Scalar]] = []
+        var cur: [Unicode.Scalar] = []
+        var i = 0
+        while i < a.count {
+            let c = a[i]
+            if c == "\"" || c == "'" {
+                let (next, closed, _) = lexScanQuoted(a, i)
+                guard closed else { throw Toml.ParseError(line: line, message: "unterminated quoted key") }
+                cur.append(contentsOf: a[i..<next])
+                i = next
+                continue
+            }
+            if c == "." { rawSegs.append(cur); cur = []; i += 1; continue }
+            cur.append(c)
+            i += 1
+        }
+        rawSegs.append(cur)
+        return try rawSegs.map { try validateKeySegment($0, line: line) }
+    }
+
+    private static func validateKeySegment(_ seg: [Unicode.Scalar], line: Int) throws -> String {
+        var s = seg
+        while let f = s.first, f == " " || f == "\t" { s.removeFirst() }
+        while let l = s.last, l == " " || l == "\t" { s.removeLast() }
+        guard !s.isEmpty else { throw Toml.ParseError(line: line, message: "empty key") }
+        let q = s[0]
+        if q == "\"" || q == "'" {
+            if s.count >= 3 && s[1] == q && s[2] == q {
+                throw Toml.ParseError(line: line, message: "multi-line string keys are not allowed")
+            }
+            let (next, closed, multiline) = lexScanQuoted(s, 0)
+            guard closed, !multiline else { throw Toml.ParseError(line: line, message: "invalid quoted key") }
+            guard next == s.count else {
+                throw Toml.ParseError(line: line, message: "unexpected content after quoted key")
+            }
+            let body = Array(s[1..<(s.count - 1)])
+            let p = StrictParser([], line: line)
+            return q == "\"" ? try p.decodeBasic(body, multiline: false)
+                             : try p.decodeLiteral(body, multiline: false)
+        }
+        for c in s {
+            let ok = (c >= "A" && c <= "Z") || (c >= "a" && c <= "z")
+                || (c >= "0" && c <= "9") || c == "_" || c == "-"
+            guard ok else {
+                throw Toml.ParseError(line: line, message: "invalid character in bare key '\(Character(c))'")
+            }
+        }
+        return String(String.UnicodeScalarView(s))
     }
 }
