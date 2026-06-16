@@ -22,7 +22,17 @@ public extension Toml.Annotated {
     /// Parse `source` into a lossless DOM. Throws `Toml.ParseError` on a
     /// malformed header or a content line without `=`.
     init(parsing source: String) throws {
-        let lines = Toml.lexLines(source)
+        // A single optional leading UTF-8 BOM (U+FEFF) at the very start is
+        // tolerated and parked in the document `leading` so it round-trips
+        // byte-identically and does not corrupt the first key. Only at offset 0
+        // — a BOM mid-document is a real (invalid) character.
+        var src = source
+        var bom = ""
+        if src.unicodeScalars.first == "\u{FEFF}" {
+            bom = "\u{FEFF}"
+            src.unicodeScalars.removeFirst()
+        }
+        let lines = Toml.lexLines(src)
 
         var leading = ""                  // doc-level leading (before first content)
         var sawContent = false
@@ -156,7 +166,7 @@ public extension Toml.Annotated {
         if !sawContent { leading = pending }
         else { appendTrailing(pending) }
 
-        self.init(leading: leading, root: root, blocks: blocks)
+        self.init(leading: bom + leading, root: root, blocks: blocks)
     }
 }
 

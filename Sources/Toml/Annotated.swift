@@ -74,12 +74,20 @@ public extension Toml.Annotated {
             self.trailing = trailing
         }
 
-        /// First entry whose dotted key matches `key` (a single segment or a
-        /// dotted path), or nil. Lookup is on parsed key parts, so quoting
-        /// style does not matter.
+        /// First entry whose key matches `key`, or nil. `key` is interpreted as
+        /// dotted-key SOURCE syntax — `a.b` is the two-segment path `["a","b"]`,
+        /// so a key literally NAMED `a.b` must be quoted (`"a.b"`) or looked up
+        /// via `entry(forKeyParts:)`. Quoting style of bare segments does not
+        /// matter (`"x"` and `x` both resolve to `["x"]`).
         public func entry(forKey key: String) -> Entry? {
-            let parts = Toml.lexDottedPath(key)
-            return entries.first { $0.key == parts }
+            entry(forKeyParts: Toml.lexDottedPath(key))
+        }
+
+        /// First entry whose parsed key parts equal `parts`, or nil. Use this
+        /// to look up a key whose name contains a literal dot (pass
+        /// `["a.b"]`), or to reuse an `Entry.key` directly without re-quoting.
+        public func entry(forKeyParts parts: [String]) -> Entry? {
+            entries.first { $0.key == parts }
         }
     }
 

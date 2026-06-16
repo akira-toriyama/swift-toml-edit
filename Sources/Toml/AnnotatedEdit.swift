@@ -33,35 +33,54 @@ public extension Toml.Annotated {
 
     /// Reorder the array-of-tables elements at `path`. `order` is a
     /// permutation of `0..<count`: the element currently at ordinal
-    /// `order[k]` becomes the new ordinal `k`. Each element moves whole, so
-    /// its banner comment travels with it. The elements' positions in the
-    /// document (relative to other tables) are preserved — only their order
-    /// among themselves changes. An invalid permutation is a no-op.
+    /// `order[k]` becomes the new ordinal `k`. Each element moves WHOLE —
+    /// its `[[path]]` header, its body, its banner comment, AND any sub-table
+    /// blocks it owns (`[path.sub]`, `[[path.sub]]`, …) travel together — so an
+    /// element's nested tables stay bound to it. The elements' positions
+    /// relative to unrelated blocks are preserved. An invalid permutation is a
+    /// no-op.
     func reorderingArrayOfTables(at path: [String], _ order: [Int]) -> Self {
-        let slots = blockIndices(ofArrayOfTablesAt: path)
-        let n = slots.count
+        let ranges = blockRangesOfArrayOfTables(at: path)
+        let n = ranges.count
         guard order.count == n, Set(order) == Set(0..<n) else { return self }
-        let elements = slots.map { blocks[$0] }
-        var copy = self
-        for (k, slot) in slots.enumerated() {
-            copy.blocks[slot] = elements[order[k]]
+        let elements = ranges.map { Array(blocks[$0]) }
+        // Rebuild: emit the permuted element slice at each element's original
+        // start, keeping any unrelated blocks between elements in place.
+        var newBlocks: [Block] = []
+        var k = 0
+        var idx = 0
+        while idx < blocks.count {
+            if k < ranges.count && idx == ranges[k].lowerBound {
+                newBlocks.append(contentsOf: elements[order[k]])
+                idx = ranges[k].upperBound
+                k += 1
+            } else {
+                newBlocks.append(blocks[idx])
+                idx += 1
+            }
         }
+        var copy = self
+        copy.blocks = newBlocks
         return copy
     }
 
     /// Remove the array-of-tables element at `ordinal` (0-based) under `path`.
-    /// The whole block — header, body, and attached leading trivia — is
-    /// removed. An out-of-range ordinal is a no-op.
+    /// The WHOLE element — its `[[path]]` header, body, attached leading
+    /// trivia, AND any sub-table blocks it owns — is removed (otherwise an
+    /// orphaned `[path.sub]` would re-bind to the wrong element or fail to
+    /// parse). An out-of-range ordinal is a no-op.
     func removingArrayOfTablesElement(at path: [String], ordinal: Int) -> Self {
-        let slots = blockIndices(ofArrayOfTablesAt: path)
-        guard slots.indices.contains(ordinal) else { return self }
+        let ranges = blockRangesOfArrayOfTables(at: path)
+        guard ranges.indices.contains(ordinal) else { return self }
         var copy = self
-        copy.blocks.remove(at: slots[ordinal])
+        copy.blocks.removeSubrange(ranges[ordinal])
         return copy
     }
 
     /// Remove the first `[table]` (std-table) block at `path`, with its
-    /// attached leading trivia. A no-op if there is no such table.
+    /// attached leading trivia. A no-op if there is no such table. (Sub-tables
+    /// `[path.sub]` are left in place; they remain valid, re-rooting `path` as
+    /// an implicit super-table.)
     func removingTable(at path: [String]) -> Self {
         guard let i = blocks.firstIndex(where: { $0.kind == .table && $0.path == path })
         else { return self }
@@ -70,9 +89,31 @@ public extension Toml.Annotated {
         return copy
     }
 
-    /// Indices into `blocks` of the array-of-tables elements at `path`,
-    /// in document order.
+    /// Indices into `blocks` of the array-of-tables ELEMENT HEADERS at `path`,
+    /// in document order. (Use `blockRangesOfArrayOfTables` to get each
+    /// element's full owned span, header + sub-tables.)
     func blockIndices(ofArrayOfTablesAt path: [String]) -> [Int] {
         blocks.indices.filter { blocks[$0].kind == .arrayElement && blocks[$0].path == path }
+    }
+
+    /// The contiguous block range each `[[path]]` element OWNS, in document
+    /// order: its header block plus every following block whose header path is a
+    /// strict descendant of `path` (e.g. `[path.physical]`, `[[path.variety]]`),
+    /// up to the next sibling `[[path]]` element or any header that leaves the
+    /// subtree. This is the unit reorder/delete moves so nested tables stay
+    /// bound to their element.
+    func blockRangesOfArrayOfTables(at path: [String]) -> [Range<Int>] {
+        let starts = blockIndices(ofArrayOfTablesAt: path)
+        func isDescendant(_ b: Block) -> Bool {
+            b.path.count > path.count && Array(b.path.prefix(path.count)) == path
+        }
+        var ranges: [Range<Int>] = []
+        for (k, s) in starts.enumerated() {
+            let hardEnd = (k + 1 < starts.count) ? starts[k + 1] : blocks.count
+            var e = s + 1
+            while e < hardEnd && isDescendant(blocks[e]) { e += 1 }
+            ranges.append(s..<e)
+        }
+        return ranges
     }
 }

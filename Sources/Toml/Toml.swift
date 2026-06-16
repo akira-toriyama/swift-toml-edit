@@ -111,7 +111,7 @@ public enum Toml {
     /// Dotted keys + headers fold to nested `.table`; `[[a.b]]` appends
     /// to `a[last].b`; every AoT row is seeded with `lineKey`.
     public static func parse(_ source: String) throws -> [String: Value] {
-        let lines = source.split(separator: "\n",
+        let lines = stripBOM(source).split(separator: "\n",
                                  omittingEmptySubsequences: false).map(String.init)
         var root: [String: Value] = [:]
         var currentPath: [String] = []
@@ -172,7 +172,7 @@ public enum Toml {
     /// throwing: a malformed header / missing `=` / unrecognised scalar
     /// drops just that line, the rest still loads. No `lineKey` injection.
     public static func parseFlat(_ source: String) -> Document {
-        let lines = source.split(separator: "\n",
+        let lines = stripBOM(source).split(separator: "\n",
                                  omittingEmptySubsequences: false).map(String.init)
         var doc = Document()
         doc.tables[""] = [:]          // top-level scope always present
@@ -221,6 +221,12 @@ public enum Toml {
             }
         }
         return doc
+    }
+
+    /// Drop a single optional leading UTF-8 BOM (U+FEFF) at offset 0 so the
+    /// first key is not corrupted into `"\u{FEFF}key"`. Only at the very start.
+    private static func stripBOM(_ s: String) -> String {
+        s.unicodeScalars.first == "\u{FEFF}" ? String(s.unicodeScalars.dropFirst()) : s
     }
 
     // MARK: - Shared scalar / line helpers
