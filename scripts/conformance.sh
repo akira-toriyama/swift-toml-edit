@@ -22,13 +22,11 @@ if ! command -v toml-test >/dev/null 2>&1; then
 fi
 
 echo "==> building conformance binaries (release)"
-PRODUCTS=(--product toml-decode)
+# Build each product separately: `swift build` honours only the LAST --product
+# when several are passed, so a combined invocation leaves one binary unbuilt.
+swift build -c release --product toml-decode
 HAVE_ENCODE=0
-if swift build -c release --product toml-encode >/dev/null 2>&1; then
-  PRODUCTS+=(--product toml-encode)
-  HAVE_ENCODE=1
-fi
-swift build -c release "${PRODUCTS[@]}"
+if swift build -c release --product toml-encode; then HAVE_ENCODE=1; fi
 
 DEC="$PWD/.build/release/toml-decode"
 
@@ -38,6 +36,8 @@ echo "==> decoder conformance (TOML 1.0.0)"
 toml-test test -toml=1.0 -decoder="$DEC"
 
 if [ "$HAVE_ENCODE" = "1" ]; then
+  # The runner verifies encoder output by re-decoding it, so it needs a decoder
+  # alongside the encoder.
   echo "==> encoder conformance (TOML 1.0.0)"
-  toml-test test -toml=1.0 -encoder="$PWD/.build/release/toml-encode"
+  toml-test test -toml=1.0 -decoder="$DEC" -encoder="$PWD/.build/release/toml-encode"
 fi

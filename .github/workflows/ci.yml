@@ -79,7 +79,12 @@ jobs:
       - name: Install toml-test (pinned)
         run: go install github.com/toml-lang/toml-test/v2/cmd/toml-test@v2.2.0
       - name: Build conformance binaries (release)
-        run: swift build -c release --product toml-decode --product toml-encode
+        # Build each product separately: `swift build` honours only the LAST
+        # `--product` when several are passed, so one combined invocation would
+        # leave the other binary unbuilt.
+        run: |
+          swift build -c release --product toml-decode
+          swift build -c release --product toml-encode
       - name: Decoder conformance (TOML 1.0.0)
         run: |
           "$(go env GOPATH)/bin/toml-test" test -toml=1.0 \
