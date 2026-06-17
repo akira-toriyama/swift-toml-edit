@@ -456,54 +456,24 @@ public enum Toml {
 
     // MARK: - Nested write / array-of-tables drill (chord)
 
-    private static func write(_ root: inout [String: Value],
+    // Each function is a single self-recursive walk: the former outer
+    // wrapper differed from its `*Inner` twin only by a leading
+    // `guard !path.isEmpty` (the recursion always passes a non-empty
+    // `dropFirst` slice), so the pairs collapse to one function each.
+
+    private static func write(_ table: inout [String: Value],
                               path: [String], value: Value) {
         guard !path.isEmpty else { return }
-        if path.count == 1 { root[path[0]] = value; return }
-        var inner: [String: Value]
-        if case .table(let t) = root[path[0]] { inner = t } else { inner = [:] }
-        writeInner(&inner, path: Array(path.dropFirst()), value: value)
-        root[path[0]] = .table(inner)
-    }
-
-    private static func writeInner(_ table: inout [String: Value],
-                                   path: [String], value: Value) {
         if path.count == 1 { table[path[0]] = value; return }
         var inner: [String: Value]
         if case .table(let t) = table[path[0]] { inner = t } else { inner = [:] }
-        writeInner(&inner, path: Array(path.dropFirst()), value: value)
+        write(&inner, path: Array(path.dropFirst()), value: value)
         table[path[0]] = .table(inner)
     }
 
-    private static func appendArrayOfTablesRow(_ root: inout [String: Value],
+    private static func appendArrayOfTablesRow(_ table: inout [String: Value],
                                                path: [String], lineNo: Int) {
         guard !path.isEmpty else { return }
-        let seed: [String: Value] = [lineKey: .int(Int64(lineNo))]
-        if path.count == 1 {
-            var rows: [[String: Value]]
-            if case .arrayOfTables(let e) = root[path[0]] { rows = e } else { rows = [] }
-            rows.append(seed)
-            root[path[0]] = .arrayOfTables(rows)
-            return
-        }
-        // `[[a.b]]` appends to `a[last].b`: when `a` is already an AoT,
-        // drill into its last row rather than shadowing it.
-        if case .arrayOfTables(var rows) = root[path[0]], !rows.isEmpty {
-            var last = rows[rows.count - 1]
-            appendArrayOfTablesRowInner(&last, path: Array(path.dropFirst()), lineNo: lineNo)
-            rows[rows.count - 1] = last
-            root[path[0]] = .arrayOfTables(rows)
-            return
-        }
-        var inner: [String: Value]
-        if case .table(let t) = root[path[0]] { inner = t } else { inner = [:] }
-        appendArrayOfTablesRowInner(&inner, path: Array(path.dropFirst()), lineNo: lineNo)
-        root[path[0]] = .table(inner)
-    }
-
-    private static func appendArrayOfTablesRowInner(
-        _ table: inout [String: Value], path: [String], lineNo: Int
-    ) {
         let seed: [String: Value] = [lineKey: .int(Int64(lineNo))]
         if path.count == 1 {
             var rows: [[String: Value]]
@@ -512,69 +482,45 @@ public enum Toml {
             table[path[0]] = .arrayOfTables(rows)
             return
         }
+        // `[[a.b]]` appends to `a[last].b`: when `a` is already an AoT,
+        // drill into its last row rather than shadowing it.
         if case .arrayOfTables(var rows) = table[path[0]], !rows.isEmpty {
             var last = rows[rows.count - 1]
-            appendArrayOfTablesRowInner(&last, path: Array(path.dropFirst()), lineNo: lineNo)
+            appendArrayOfTablesRow(&last, path: Array(path.dropFirst()), lineNo: lineNo)
             rows[rows.count - 1] = last
             table[path[0]] = .arrayOfTables(rows)
             return
         }
         var inner: [String: Value]
         if case .table(let t) = table[path[0]] { inner = t } else { inner = [:] }
-        appendArrayOfTablesRowInner(&inner, path: Array(path.dropFirst()), lineNo: lineNo)
+        appendArrayOfTablesRow(&inner, path: Array(path.dropFirst()), lineNo: lineNo)
         table[path[0]] = .table(inner)
     }
 
     private static func writeIntoArrayOfTablesRow(
-        _ root: inout [String: Value], path: [String],
+        _ table: inout [String: Value], path: [String],
         key: [String], value: Value
     ) {
         guard !path.isEmpty else { return }
         if path.count == 1 {
-            guard case .arrayOfTables(var rows) = root[path[0]], !rows.isEmpty else { return }
-            var row = rows[rows.count - 1]
-            writeInner(&row, path: key, value: value)
-            rows[rows.count - 1] = row
-            root[path[0]] = .arrayOfTables(rows)
-            return
-        }
-        if case .arrayOfTables(var rows) = root[path[0]], !rows.isEmpty {
-            var last = rows[rows.count - 1]
-            writeIntoArrayOfTablesRowInner(&last, path: Array(path.dropFirst()),
-                                           key: key, value: value)
-            rows[rows.count - 1] = last
-            root[path[0]] = .arrayOfTables(rows)
-            return
-        }
-        guard case .table(var inner) = root[path[0]] else { return }
-        writeIntoArrayOfTablesRowInner(&inner, path: Array(path.dropFirst()),
-                                       key: key, value: value)
-        root[path[0]] = .table(inner)
-    }
-
-    private static func writeIntoArrayOfTablesRowInner(
-        _ table: inout [String: Value], path: [String],
-        key: [String], value: Value
-    ) {
-        if path.count == 1 {
             guard case .arrayOfTables(var rows) = table[path[0]], !rows.isEmpty else { return }
             var row = rows[rows.count - 1]
-            writeInner(&row, path: key, value: value)
+            write(&row, path: key, value: value)
             rows[rows.count - 1] = row
             table[path[0]] = .arrayOfTables(rows)
             return
         }
         if case .arrayOfTables(var rows) = table[path[0]], !rows.isEmpty {
             var last = rows[rows.count - 1]
-            writeIntoArrayOfTablesRowInner(&last, path: Array(path.dropFirst()),
-                                           key: key, value: value)
+            writeIntoArrayOfTablesRow(&last, path: Array(path.dropFirst()),
+                                      key: key, value: value)
             rows[rows.count - 1] = last
             table[path[0]] = .arrayOfTables(rows)
             return
         }
         guard case .table(var inner) = table[path[0]] else { return }
-        writeIntoArrayOfTablesRowInner(&inner, path: Array(path.dropFirst()),
-                                       key: key, value: value)
+        writeIntoArrayOfTablesRow(&inner, path: Array(path.dropFirst()),
+                                  key: key, value: value)
         table[path[0]] = .table(inner)
     }
 }
