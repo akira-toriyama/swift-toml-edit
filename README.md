@@ -21,7 +21,7 @@ The 1.0 bar — **full TOML 1.0 round-trip** — is **met**: the library passes 
 entire official [`toml-test`](https://github.com/toml-lang/toml-test) 1.0.0 suite
 in **both directions** (decoder and encoder), and a byte-identity corpus +
 generative fuzzer guard the round-trip invariant on top. The public API is
-settling for a 1.0 tag; minor surface may still move until then.
+stable as of **v1.0.0** and follows semantic versioning.
 
 ## Usage
 
