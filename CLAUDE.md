@@ -55,8 +55,9 @@
 - sill has NO CI; the app repos only build/test a macOS .app via the shared
   composite action + a rolling-draft .zip release. Here correctness is the
   product, so CI is the gate: build+test on macOS AND Linux (`ci.yml`); the
-  official `toml-test` conformance suite (the v1.0 coverage bar) against an
-  in-package `toml-test-cli`, and the round-trip byte-identity goldens over the
+  official `toml-test` conformance suite (the v1.0 coverage bar) against the
+  in-package `toml-decode` / `toml-encode` executables, and the round-trip
+  byte-identity goldens over the
   family's real configs (committed under `Tests/TomlTests/Fixtures`). The v1.0
   tag is cut only when conformance + byte-identity are fully passing.
 - Linux is supported on purpose (Foundation-only, no AppKit) — keep the code

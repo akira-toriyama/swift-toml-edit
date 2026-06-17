@@ -1,12 +1,17 @@
-// Toml — the family's shared hand-rolled TOML *subset* parser.
+// Toml — the config-oriented, LOSSY READ projection of the library.
 //
-// Phase 1.6 of the atelier refactor folds four near-identical in-tree
-// parsers (chord 434L / facet 251L / perch 180L / wand 136L) into this
-// one pure module. It keeps the family zero-dep (Apple frameworks only,
-// no SwiftPM TOML library) while removing the drift between four copies.
+// This file is NOT the whole module: it is the value-only read path the
+// atelier app family uses for config, where you want a plain dict/tree of
+// values, not a format-preserving document. Full TOML 1.0 conformance
+// (both directions) lives in the sibling files — see the pointer at the
+// bottom. It stays zero-dep (Apple frameworks only, no SwiftPM TOML lib).
 //
-// chord's 434-line parser is the feature SUPERSET reference, but the
-// four diverged on SHAPE and SEMANTICS, not just features:
+// The family diverged on SHAPE and SEMANTICS, so this projection ships
+// BOTH skins over one shared scalar/line core:
+//
+//   • `parse(_:)  throws -> [String: Value]`   — NESTED, STRICT (chord)
+//   • `parseFlat(_:) -> Document`              — FLAT, LENIENT (the 3)
+//
 //   • chord wants a NESTED tree + STRICT throwing parse (dotted keys
 //     collapse, nested `[[a.b]]` arrays-of-tables, a synthetic
 //     `__line__` per AoT row for warning attribution).
@@ -14,18 +19,12 @@
 //     header text (`tables["cast.overlay.trail"]`, `arrays["rules"]`)
 //     + LENIENT parsing (a typo loses one line, the daemon survives).
 //
-// Rather than force one shape and lossily re-project, this module ships
-// BOTH skins over one shared scalar/line core:
-//
-//   • `parse(_:)  throws -> [String: Value]`   — NESTED, STRICT (chord)
-//   • `parseFlat(_:) -> Document`              — FLAT, LENIENT (the 3)
-//
 // Both share the same `Value` model, scalar grammar, comment stripping,
 // quote handling, and multi-line-array accumulation. They differ only
 // in WHERE a parsed value lands (a nested tree vs. flat literal-keyed
 // maps) and in error policy (throw vs. skip-the-line).
 //
-// Supported (the union of all four, plus the superset deltas):
+// Surfaced by this projection:
 //   • `key = value` at table/section scope
 //   • dotted keys `a.b.c = …` collapse to nested tables (`parse` only)
 //   • `[table]` / `[sub.section]` headers; nested for `parse`, literal
@@ -45,11 +44,15 @@
 //   • `#` comments to end of line, quote- AND escape-aware (an
 //     escaped `\"` inside a basic string doesn't end it). CRLF tolerated.
 //
-// NOT supported (by design — none of the four configs need them):
-//   • multi-line strings (`"""…"""`), multi-line *inline tables*
-//     (TOML 1.0 forbids those anyway), date/time literals, nested
-//     arrays-of-arrays, integer underscores/octal/binary, inf/nan.
-//   • serialization / emit — verified none of the four writes TOML.
+// This projection deliberately does NOT surface multi-line strings
+// (`"""…"""`), date/time literals, integer underscores/octal/binary,
+// inf/nan, nested arrays-of-arrays, or emit — the family's configs don't
+// need them on this fast path. These are NOT a module limitation: full
+// TOML 1.0 (incl. all of the above, plus byte-identical round-trip and
+// the toml-test ENCODER direction) lives in the sibling files —
+//   • lossless format-preserving DOM: `Annotated.swift` / `AnnotatedParse.swift`
+//   • strict typed decode: `DecodeStrict.swift` / `TypedValue.swift` / `TypedTree.swift`
+//   • encode / emit: `Serialize.swift` / `TaggedJSON.swift`
 //
 // Out-of-range / typed clamping is NOT done here — that policy lives in
 // each app's Config layer, so a typo's blast radius stays one binding.
