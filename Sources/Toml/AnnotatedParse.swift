@@ -237,27 +237,10 @@ extension Toml {
     /// Split a dotted key / header on top-level dots, keeping quoted segments
     /// intact (`a."b.c"` → `["a", "b.c"]`) and unquoting each segment.
     static func lexDottedPath(_ s: String) -> [String] {
-        var segs: [String] = []
-        var cur = ""
-        var inStr = false
-        var quote: Character = "\""
-        var escaped = false
-        for c in s {
-            if inStr {
-                cur.append(c)
-                if escaped { escaped = false }
-                else if c == "\\" && quote == "\"" { escaped = true }
-                else if c == quote { inStr = false }
-            } else if c == "\"" || c == "'" {
-                inStr = true; quote = c; cur.append(c)
-            } else if c == "." {
-                segs.append(cur); cur = ""
-            } else {
-                cur.append(c)
-            }
-        }
-        segs.append(cur)
-        return segs.map { Toml.lexUnquoteKey($0.trimmingCharacters(in: .whitespaces)) }
+        // Shares the scan loop with the lossy `splitDottedPath`, but DECODES
+        // basic-string escapes per segment (lexUnquoteKey) — the lossy side
+        // keeps them literal (unquoteKey). Keep these two finishers distinct.
+        Toml.scanDottedSegments(s).map { Toml.lexUnquoteKey($0.trimmingCharacters(in: .whitespaces)) }
     }
 
     /// Resolve a key segment's quoting: strip a literal `'…'` pair verbatim,
