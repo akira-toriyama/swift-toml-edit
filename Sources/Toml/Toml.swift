@@ -397,6 +397,18 @@ public enum Toml {
     /// each segment. Plain `a.b.c` → `[a, b, c]` (identical to a naive
     /// split, so chord's quote-free paths are unchanged).
     private static func splitDottedPath(_ s: String) -> [String] {
+        scanDottedSegments(s).map { unquoteKey($0.trimmingCharacters(in: .whitespaces)) }
+    }
+
+    /// Split a dotted key / header on top-level dots, keeping quoted segments
+    /// intact (`a."b.c"` → `["a", "\"b.c\""]`) — the RAW, still-quoted,
+    /// whitespace-included segments. Callers apply their own per-segment
+    /// unquote policy: the lossy projection keeps escapes literal
+    /// (`unquoteKey`), the lossless DOM lookup decodes them (`AnnotatedParse`'s
+    /// `lexUnquoteKey`). One scanner, two finishers — see LossyProjectionTests
+    /// / ReviewFixesTests for the pinned escape-decode divergence (do NOT
+    /// collapse the two finishers into one).
+    static func scanDottedSegments(_ s: String) -> [String] {
         var segs: [String] = []
         var cur = ""
         var inStr = false
@@ -417,7 +429,7 @@ public enum Toml {
             }
         }
         segs.append(cur)
-        return segs.map { unquoteKey($0.trimmingCharacters(in: .whitespaces)) }
+        return segs
     }
 
     /// Strip a matching surrounding quote pair (`"…"` or `'…'`) from a

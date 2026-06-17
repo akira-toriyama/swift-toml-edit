@@ -164,6 +164,16 @@ import Foundation
         #expect(doc.root.entry(forKey: #""a.b""#)?.value == .int(1))
     }
 
+    // The DOM lookup splits via lexDottedPath, which DECODES basic-string
+    // escapes per segment (the lossless side), unlike the lossy
+    // splitDottedPath (literal — see LossyProjectionTests.lossyKeyEscapesStayLiteral).
+    // So a `"a\tb"` lookup resolves to the escape-decoded key the strict
+    // parser stored. Pins the finisher split that shares scanDottedSegments.
+    @Test func dottedPathLookupDecodesKeyEscapes() throws {
+        let doc = try Toml.Annotated(parsing: #""a\tb" = 1"# + "\n")
+        #expect(doc.root.entry(forKey: #""a\tb""#)?.value == .int(1))
+    }
+
     @Test func identityReorderIsByteStable() throws {
         let s = """
         [[r]]

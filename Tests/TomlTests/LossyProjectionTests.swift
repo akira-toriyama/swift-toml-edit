@@ -64,6 +64,20 @@ import Foundation
     #expect(inner["roles"]?.asStringArray == ["Link"])
 }
 
+@Test func lossyKeyEscapesStayLiteral() throws {
+    // The lossy projection's per-segment unquote (`unquoteKey`) strips the
+    // surrounding quote pair but does NOT decode basic-string escapes — so a
+    // `"a\tb"` table key stays the LITERAL backslash-t, never a tab. This
+    // pins the divergence from the lossless DOM lookup (`lexDottedPath` →
+    // decode); a future merge of the two dotted-path finishers must fail here.
+    let root = try Toml.parse(#"""
+    ["a\tb"]
+    x = 1
+    """#)
+    #expect(root[#"a\tb"#]?.asTable?["x"]?.asInt == 1)   // literal backslash-t kept
+    #expect(root["a\tb"] == nil)                          // NOT escape-decoded to a tab
+}
+
 @Test func nestedArrayOfTablesDrillAndLineKey() throws {
     let root = try Toml.parse("""
     [[server]]
