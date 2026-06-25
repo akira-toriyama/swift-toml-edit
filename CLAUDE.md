@@ -28,11 +28,15 @@
   not collide with the lossy `Toml.Value` / `Toml.Document` names.
 - **Lossy projection**: re-exposes the read API under the SAME names sill's
   `Toml` had — `parse` (nested, strict), `parseFlat` (flat, lenient), `Value`,
-  `Document`, the accessors, `lineKey` — so the five consumers migrate by
-  changing import/dependency wiring only (a Phase-1.6-style mechanical swap),
-  no call-site rewrites. (Until the lossless parser passes full toml-test, the
+  `Document`, the accessors. (Until the lossless parser passes full toml-test, the
   projection is the proven sill line-parser, ported verbatim; unifying it onto
   the lossless DOM is a later, gated step — before the consumer swap.)
+  Source attribution: `parse`'s `Value.arrayOfTables` holds `[Row]` (each row's
+  `fields` + the `[[header]]` `SourceSpan` — see `Span.swift`), NOT a bare
+  `[[String: Value]]`. This replaced the old synthetic `__line__`/`lineKey`
+  dict key (2.0.0) — a typed location that can't shadow a user key and rides
+  on value-copy when a consumer clones a row. `parseFlat` keeps plain
+  `[[String: Value]]` rows (its flat consumers don't attribute warnings).
 - Edit ops are deliberately MINIMAL (AoT reorder/delete + serialize).
   Arbitrary-key value rewrite and from-scratch emit are YAGNI — do not add them.
 
