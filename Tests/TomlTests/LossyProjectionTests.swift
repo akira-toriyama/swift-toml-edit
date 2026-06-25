@@ -14,7 +14,8 @@ import Foundation
     #expect(Toml.Value.int(1) == .int(1))
     #expect(Toml.Value.int(1) != .double(1))
     #expect(Toml.Value.array([.string("a"), .int(2)]) == .array([.string("a"), .int(2)]))
-    #expect(Toml.Value.arrayOfTables([["k": .bool(true)]]) == .arrayOfTables([["k": .bool(true)]]))
+    #expect(Toml.Value.arrayOfTables([Toml.Row(fields: ["k": .bool(true)])])
+            == .arrayOfTables([Toml.Row(fields: ["k": .bool(true)])]))
 }
 
 @Test func accessors() {
@@ -78,7 +79,7 @@ import Foundation
     #expect(root["a\tb"] == nil)                          // NOT escape-decoded to a tab
 }
 
-@Test func nestedArrayOfTablesDrillAndLineKey() throws {
+@Test func nestedArrayOfTablesDrillAndSpan() throws {
     let root = try Toml.parse("""
     [[server]]
     name = "alpha"
@@ -88,11 +89,48 @@ import Foundation
     let rows = try #require(root["server"]?.asArrayOfTables)
     #expect(rows.count == 1)
     #expect(rows[0]["name"]?.asString == "alpha")
-    #expect(rows[0][Toml.lineKey]?.asInt == 1)     // [[server]] on line 1
+    #expect(rows[0].span?.line == 1)               // [[server]] on line 1
+    #expect(rows[0].span?.column == 1)             // unindented header
     let ports = try #require(rows[0]["port"]?.asArrayOfTables)
     #expect(ports.count == 1)
     #expect(ports[0]["num"]?.asInt == 80)
-    #expect(ports[0][Toml.lineKey]?.asInt == 3)    // [[server.port]] on line 3
+    #expect(ports[0].span?.line == 3)              // [[server.port]] on line 3
+}
+
+@Test func rowSpanPerElementAndColumn() throws {
+    // Each AoT element carries its own [[header]] line; an indented header
+    // reports its 1-based column (just past the leading whitespace).
+    let root = try Toml.parse("""
+    [[bindings]]
+    input = "a"
+
+    [[bindings]]
+    input = "b"
+      [[bindings.per-app]]
+      bundle-id = "com.x"
+    """)
+    let rows = try #require(root["bindings"]?.asArrayOfTables)
+    #expect(rows.count == 2)
+    #expect(rows[0].span?.line == 1)
+    #expect(rows[0].span?.column == 1)
+    #expect(rows[1].span?.line == 4)
+    // nested [[bindings.per-app]] is indented two spaces → column 3, line 6,
+    // and lives under the SECOND bindings row (a[last].b drill).
+    let perApp = try #require(rows[1]["per-app"]?.asArrayOfTables)
+    #expect(perApp.count == 1)
+    #expect(perApp[0].span?.line == 6)
+    #expect(perApp[0].span?.column == 3)
+    #expect(perApp[0]["bundle-id"]?.asString == "com.x")
+    // The row dict holds only user fields — no synthetic line key leaks in.
+    #expect(rows[0].fields.keys.sorted() == ["input"])
+}
+
+@Test func handConstructedRowHasNilSpan() {
+    // A Row built without a span (e.g. a synthesized desugar row) reports
+    // nil — the consumer treats that as "no source line", same as before.
+    let r = Toml.Row(fields: ["input": .string("a")])
+    #expect(r.span == nil)
+    #expect(r["input"]?.asString == "a")
 }
 
 @Test func strictThrowsOnUnrecognisedScalar() {
@@ -143,8 +181,11 @@ import Foundation
     #expect(rows[0]["app"]?.asString == "A")
     #expect(rows[0]["action"]?.asString == "float")
     #expect(rows[1]["app"]?.asString == "B")
-    // a plain [section] closes the AoT; no __line__ in flat rows
-    #expect(rows[0][Toml.lineKey] == nil)
+    // a plain [section] closes the AoT; flat rows are plain dicts with no
+    // synthetic line key (the nested `parse` carries spans on `Row`, the
+    // flat `parseFlat` does not).
+    #expect(rows[0]["__line__"] == nil)
+    #expect(rows[0].count == 2)   // app + action only
     #expect(doc.tables["other"]?["z"]?.asInt == 1)
 }
 

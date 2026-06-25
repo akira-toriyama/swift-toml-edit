@@ -13,8 +13,8 @@
 //   • `parseFlat(_:) -> Document`              — FLAT, LENIENT (the 3)
 //
 //   • chord wants a NESTED tree + STRICT throwing parse (dotted keys
-//     collapse, nested `[[a.b]]` arrays-of-tables, a synthetic
-//     `__line__` per AoT row for warning attribution).
+//     collapse, nested `[[a.b]]` arrays-of-tables, each AoT row a `Row`
+//     carrying a `SourceSpan` for warning attribution — see Span.swift).
 //   • facet / perch / wand want a FLAT model keyed by the *literal*
 //     header text (`tables["cast.overlay.trail"]`, `arrays["rules"]`)
 //     + LENIENT parsing (a typo loses one line, the daemon survives).
@@ -64,6 +64,12 @@ public enum Toml {
     /// A parsed TOML value. The case set is chord's superset; the three
     /// flat consumers never construct `.arrayOfTables` and read string
     /// arrays via `asStringArray` rather than a dedicated case.
+    ///
+    /// `.arrayOfTables` holds `[Row]` (each row's fields + its `[[header]]`
+    /// `SourceSpan`) rather than a bare `[[String: Value]]`, so the nested
+    /// strict `parse` can attribute warnings to a source line without a
+    /// synthetic dict key. Only `parse` constructs it; `parseFlat` keeps its
+    /// rows as plain `[[String: Value]]` in `Document.arrays`.
     public enum Value: Sendable, Equatable {
         case string(String)
         case int(Int64)
@@ -71,7 +77,7 @@ public enum Toml {
         case bool(Bool)
         case array([Value])
         case table([String: Value])
-        indirect case arrayOfTables([[String: Value]])
+        indirect case arrayOfTables([Row])
     }
 
     /// Thrown by `parse(_:)` (strict). `parseFlat(_:)` swallows it and
@@ -100,19 +106,13 @@ public enum Toml {
         }
     }
 
-    /// Synthetic key seeded into every `[[X]]` row (nested `parse` only)
-    /// so a consumer can attribute warnings to a real line number. A
-    /// user key literally named `__line__` would shadow it — an accepted
-    /// trade-off. `parseFlat` does NOT inject it (the flat consumers
-    /// don't read it and would otherwise see a spurious row key).
-    public static let lineKey = "__line__"
-
     // MARK: - Nested, strict (chord)
 
     /// Parse into a NESTED root dictionary, throwing `ParseError` on the
     /// first malformed header / missing `=` / unrecognised scalar.
     /// Dotted keys + headers fold to nested `.table`; `[[a.b]]` appends
-    /// to `a[last].b`; every AoT row is seeded with `lineKey`.
+    /// to `a[last].b`; every AoT row is a `Row` carrying the `SourceSpan`
+    /// of its `[[header]]` (see Span.swift).
     public static func parse(_ source: String) throws -> [String: Value] {
         let lines = stripBOM(source).split(separator: "\n",
                                  omittingEmptySubsequences: false).map(String.init)
@@ -123,7 +123,8 @@ public enum Toml {
 
         while i < lines.count {
             let lineNo = i + 1
-            let line = stripComment(lines[i])
+            let rawLine = lines[i]
+            let line = stripComment(rawLine)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             i += 1
             if line.isEmpty { continue }
@@ -135,7 +136,8 @@ public enum Toml {
                 let path = line.dropFirst(2).dropLast(2)
                     .trimmingCharacters(in: .whitespaces)
                 currentPath = splitDottedPath(path)
-                appendArrayOfTablesRow(&root, path: currentPath, lineNo: lineNo)
+                let span = SourceSpan(line: lineNo, column: leadingColumn(rawLine))
+                appendArrayOfTablesRow(&root, path: currentPath, span: span)
                 inArrayOfTables = true
                 continue
             }
@@ -173,7 +175,9 @@ public enum Toml {
 
     /// Parse into the FLAT `Document` keyed by literal header text, never
     /// throwing: a malformed header / missing `=` / unrecognised scalar
-    /// drops just that line, the rest still loads. No `lineKey` injection.
+    /// drops just that line, the rest still loads. Flat rows are plain
+    /// `[[String: Value]]` (no `Row`/span — the flat consumers don't
+    /// attribute warnings to source lines).
     public static func parseFlat(_ source: String) -> Document {
         let lines = stripBOM(source).split(separator: "\n",
                                  omittingEmptySubsequences: false).map(String.init)
@@ -230,6 +234,14 @@ public enum Toml {
     /// first key is not corrupted into `"\u{FEFF}key"`. Only at the very start.
     private static func stripBOM(_ s: String) -> String {
         s.unicodeScalars.first == "\u{FEFF}" ? String(s.unicodeScalars.dropFirst()) : s
+    }
+
+    /// 1-based column of the first non-`space`/`tab` character on `line`
+    /// (i.e. just past the leading indentation) — the `SourceSpan.column`
+    /// for a header. A blank/all-whitespace line yields the column past its
+    /// end; headers are never blank, so that case doesn't arise in practice.
+    private static func leadingColumn(_ line: String) -> Int {
+        line.prefix { $0 == " " || $0 == "\t" }.count + 1
     }
 
     // MARK: - Shared scalar / line helpers
@@ -484,28 +496,27 @@ public enum Toml {
     }
 
     private static func appendArrayOfTablesRow(_ table: inout [String: Value],
-                                               path: [String], lineNo: Int) {
+                                               path: [String], span: SourceSpan) {
         guard !path.isEmpty else { return }
-        let seed: [String: Value] = [lineKey: .int(Int64(lineNo))]
         if path.count == 1 {
-            var rows: [[String: Value]]
+            var rows: [Row]
             if case .arrayOfTables(let e) = table[path[0]] { rows = e } else { rows = [] }
-            rows.append(seed)
+            rows.append(Row(span: span))
             table[path[0]] = .arrayOfTables(rows)
             return
         }
         // `[[a.b]]` appends to `a[last].b`: when `a` is already an AoT,
-        // drill into its last row rather than shadowing it.
+        // drill into its last row's fields rather than shadowing it.
         if case .arrayOfTables(var rows) = table[path[0]], !rows.isEmpty {
             var last = rows[rows.count - 1]
-            appendArrayOfTablesRow(&last, path: Array(path.dropFirst()), lineNo: lineNo)
+            appendArrayOfTablesRow(&last.fields, path: Array(path.dropFirst()), span: span)
             rows[rows.count - 1] = last
             table[path[0]] = .arrayOfTables(rows)
             return
         }
         var inner: [String: Value]
         if case .table(let t) = table[path[0]] { inner = t } else { inner = [:] }
-        appendArrayOfTablesRow(&inner, path: Array(path.dropFirst()), lineNo: lineNo)
+        appendArrayOfTablesRow(&inner, path: Array(path.dropFirst()), span: span)
         table[path[0]] = .table(inner)
     }
 
@@ -517,14 +528,14 @@ public enum Toml {
         if path.count == 1 {
             guard case .arrayOfTables(var rows) = table[path[0]], !rows.isEmpty else { return }
             var row = rows[rows.count - 1]
-            write(&row, path: key, value: value)
+            write(&row.fields, path: key, value: value)
             rows[rows.count - 1] = row
             table[path[0]] = .arrayOfTables(rows)
             return
         }
         if case .arrayOfTables(var rows) = table[path[0]], !rows.isEmpty {
             var last = rows[rows.count - 1]
-            writeIntoArrayOfTablesRow(&last, path: Array(path.dropFirst()),
+            writeIntoArrayOfTablesRow(&last.fields, path: Array(path.dropFirst()),
                                       key: key, value: value)
             rows[rows.count - 1] = last
             table[path[0]] = .arrayOfTables(rows)
@@ -568,8 +579,9 @@ public extension Toml.Value {
     }
     /// Inline / nested table.
     var asTable: [String: Toml.Value]? { if case .table(let t) = self { return t }; return nil }
-    /// Array of tables (chord + wand).
-    var asArrayOfTables: [[String: Toml.Value]]? {
+    /// Array of tables — each element a `Row` (its fields + the `[[header]]`
+    /// `SourceSpan`). Read `row["key"]` for fields, `row.span` for location.
+    var asArrayOfTables: [Toml.Row]? {
         if case .arrayOfTables(let r) = self { return r }; return nil
     }
 }
