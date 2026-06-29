@@ -34,7 +34,7 @@ jobs:
         with:
           xcode-version: latest-stable
       # Zero-dep → key the SPM cache on Package.swift only (no Package.resolved).
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: |
             .build
