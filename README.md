@@ -32,7 +32,11 @@ import Toml
 // for-byte identical; only the edited block re-renders.
 let doc = try Toml.Annotated(parsing: source)
 let reordered = doc.reorderingArrayOfTables(at: ["server"], [1, 0])
-let out = reordered.render()          // comments / spacing / quoting preserved
+// v2.1: surgical value writes — only the value token is replaced; the
+// entry's indent / spacing / same-line comment stay verbatim.
+let named = reordered.settingValue(.string("prod"),
+    atArrayOfTablesElement: ["server"], ordinal: 0, forKey: "name")
+let out = named.render()              // comments / spacing / quoting preserved
 
 // Just want the values? Use the lossy projection.
 let flat = Toml.parseFlat(source)

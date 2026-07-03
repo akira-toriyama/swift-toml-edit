@@ -1,0 +1,29 @@
+#:schema ./config.schema.json
+# facet — per-mac-desktop sections (the modern [[desktop.N.section]] shape).
+# Fixture for the per-element edit ops: facet's config auto-persist rewrites
+# label / match / layout values in place and names unnamed workspaces.
+
+[theme]
+name = "terminal"
+
+# Desktop 1 — a lost+found, an unnamed workspace, and a lens.
+[[desktop.1.section]]
+unassigned = true
+label = "Lost & Found"
+
+# unnamed workspace — auto-persist upserts a `label` here
+[[desktop.1.section]]
+type = "workspace"
+layout = "bsp"
+
+[[desktop.1.section]]
+type = "lens"
+label = "Web"
+match = 'app=Safari or app~=Chrome'   # live-edited at runtime
+apply = { tags = ["web"] }
+
+# Desktop 2 — one named workspace.
+[[desktop.2.section]]
+type = "workspace"
+label = "Main"
+layout = "stack"

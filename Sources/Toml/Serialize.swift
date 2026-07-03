@@ -61,6 +61,44 @@ public extension Toml.TypedValue {
     }
 }
 
+public extension Toml {
+    /// Serialize one lossy `Toml.Value` to its TOML value-token spelling —
+    /// the public value serializer the per-element edit ops build a new
+    /// entry `raw` from (v2.1.0). One wrapper over the internal spellings so
+    /// a consumer never re-implements the case switch:
+    ///
+    ///   `.string` → a basic string (always double-quoted, TOML escapes
+    ///               applied — the ONE quoting style emitted)
+    ///   `.int` / `.bool` → their literal spellings
+    ///   `.double` → `canonicalFloat` (always float-shaped; `inf`/`nan`
+    ///               spelled out)
+    ///   `.array` → single-line `[a, b]`; `[]` when empty
+    ///   `.table` → a single-line inline table with KEYS SORTED (the dict is
+    ///              unordered; sorting keeps the output deterministic)
+    ///   `.arrayOfTables` → OUT of the v2.1.0 contract (only chord's nested
+    ///              `parse` constructs it in value position); encoded
+    ///              best-effort as an array of inline tables, which decodes
+    ///              back to equivalent data
+    static func encode(_ value: Toml.Value) -> String {
+        switch value {
+        case .string(let s):  return encodeBasicString(s)
+        case .int(let i):     return String(i)
+        case .double(let d):  return canonicalFloat(d)
+        case .bool(let b):    return b ? "true" : "false"
+        case .array(let xs):
+            return "[" + xs.map(encode).joined(separator: ", ") + "]"
+        case .table(let t):
+            let body = t.keys.sorted()
+                .map { "\(encodeKey($0)) = \(encode(t[$0]!))" }
+                .joined(separator: ", ")
+            return "{" + body + "}"
+        case .arrayOfTables(let rows):
+            return "[" + rows.map { encode(.table($0.fields)) }
+                .joined(separator: ", ") + "]"
+        }
+    }
+}
+
 extension Toml {
     /// A key as a bare key if it is a non-empty ASCII `[A-Za-z0-9_-]+`, else a
     /// basic-quoted key (empty keys included).
