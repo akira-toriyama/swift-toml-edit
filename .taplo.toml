@@ -1,0 +1,11 @@
+# Taplo config for the fleet-synced `taplo` CI job (lint + fmt --check).
+#
+# The ONLY *.toml files in this repo are the round-trip GOLDENS under
+# Tests/TomlTests/Fixtures — hand-curated family configs whose EXACT bytes are
+# the test data (the byte-identity suite pins them) and whose `#:schema`
+# directives point at each CONSUMER repo's schema, which is absent here. So
+# `taplo lint` fails to load those schemas, and `taplo fmt` would rewrite the
+# very bytes the tests assert. Exclude them: this library has no first-party
+# TOML config for taplo to check (the workflow is then a harmless no-op, as its
+# own header anticipates for TOML-less repos).
+exclude = ["Tests/TomlTests/Fixtures/**/*.toml"]
