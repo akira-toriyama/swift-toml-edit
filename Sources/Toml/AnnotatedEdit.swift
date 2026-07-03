@@ -4,6 +4,14 @@
 // "first real need": editing the AoT blocks behind wand's tome export (#130)
 // and facet's drag-and-drop, writing the result back with formatting intact.
 //
+// v2.1.0 adds the per-element VALUE ops — `settingValue` / `upsertingValue`
+// on one `[[path]]` element and `settingArrayValue` under a `[path]` table —
+// the surgical writes facet's config auto-persistence needs (t-12az): only
+// the value token inside one entry's `raw` is rewritten (via `Toml.encode`),
+// so comments / indent / spacing stay byte-verbatim. Still out of scope:
+// from-scratch emit, and APPENDING a whole new `[[path]]` element (facet
+// skips + logs that case).
+//
 // Trivia on edit (the wand#129 rule): an element moves/deletes WHOLE — its
 // banner comment travels with it (so a per-element comment never labels the
 // wrong element), while blank-line SEPARATORS stay with the preceding block
@@ -89,6 +97,96 @@ public extension Toml.Annotated {
         return copy
     }
 
+    /// Set the value of an EXISTING entry in one `[[path]]` element.
+    /// `ordinal` is 0-based document order; `key` is ONE literal key segment
+    /// (NOT dotted-path syntax — a dotted entry `a.b = …` is never matched;
+    /// the first duplicate wins, mirroring `Body.entry(forKey:)`). Only the
+    /// value token inside the entry's `raw` is replaced: indent, key
+    /// spelling, `=` spacing, the same-line comment and the terminator stay
+    /// verbatim. The new value is spelled by `Toml.encode` — a string always
+    /// becomes a basic string, whatever the old quoting style. A missing
+    /// element / key is a no-op.
+    func settingValue(_ value: Toml.Value, atArrayOfTablesElement path: [String],
+                      ordinal: Int, forKey key: String) -> Self {
+        let heads = blockIndices(ofArrayOfTablesAt: path)
+        guard heads.indices.contains(ordinal) else { return self }
+        let bi = heads[ordinal]
+        guard let ei = blocks[bi].body.entries.firstIndex(where: { $0.key == [key] })
+        else { return self }
+        var copy = self
+        copy.blocks[bi].body.entries[ei] =
+            Self.settingRaw(blocks[bi].body.entries[ei], to: Toml.encode(value))
+        return copy
+    }
+
+    /// Set-or-insert: like `settingValue(_:atArrayOfTablesElement:…)`, but a
+    /// missing `key` is APPENDED after the element's last entry (before any
+    /// trailing trivia), inheriting that sibling's indent + line terminator
+    /// (facet: give an unnamed workspace section a `label`). A final sibling
+    /// lacking a terminator gets one added — the one neighbouring byte an
+    /// edit may touch. A missing element is still a no-op: appending a whole
+    /// new `[[path]]` element is out of scope (v2.1.0).
+    func upsertingValue(_ value: Toml.Value, inArrayOfTablesElement path: [String],
+                        ordinal: Int, forKey key: String) -> Self {
+        let heads = blockIndices(ofArrayOfTablesAt: path)
+        guard heads.indices.contains(ordinal) else { return self }
+        let bi = heads[ordinal]
+        let token = Toml.encode(value)
+        var copy = self
+        if let ei = blocks[bi].body.entries.firstIndex(where: { $0.key == [key] }) {
+            copy.blocks[bi].body.entries[ei] =
+                Self.settingRaw(blocks[bi].body.entries[ei], to: token)
+        } else {
+            copy.blocks[bi].body = Self.appending(
+                blocks[bi].body, key: key, token: token,
+                fallbackTerminator: Self.terminator(of: blocks[bi].headerRaw))
+        }
+        return copy
+    }
+
+    /// Set-or-insert `key = [elements]` under the FIRST `[path]` std table —
+    /// facet's `[tags] defined = […]`. Same in-place / append semantics as
+    /// `upsertingValue`; when no such table exists at all, a NEW block is
+    /// created at the document end: one blank separator line (the block's
+    /// `leading` — omitted in an empty document), a newline-terminated
+    /// header, then the entry. An empty `path` is a no-op.
+    func settingArrayValue(_ elements: [Toml.Value], atTable path: [String],
+                           forKey key: String) -> Self {
+        guard !path.isEmpty else { return self }
+        let token = Toml.encode(.array(elements))
+        var copy = self
+        if let bi = blocks.firstIndex(where: { $0.kind == .table && $0.path == path }) {
+            if let ei = blocks[bi].body.entries.firstIndex(where: { $0.key == [key] }) {
+                copy.blocks[bi].body.entries[ei] =
+                    Self.settingRaw(blocks[bi].body.entries[ei], to: token)
+            } else {
+                copy.blocks[bi].body = Self.appending(
+                    blocks[bi].body, key: key, token: token,
+                    fallbackTerminator: Self.terminator(of: blocks[bi].headerRaw))
+            }
+            return copy
+        }
+        // No `[path]` anywhere → append a new std-table block at the end —
+        // unless the path already names an ARRAY-of-tables, where a `[path]`
+        // header would be a redefinition (invalid TOML): no-op instead.
+        guard !blocks.contains(where: { $0.kind == .arrayElement && $0.path == path })
+        else { return self }
+        let rendered = render()
+        if !rendered.isEmpty && !rendered.hasSuffix("\n") {
+            // The document's final line has no terminator — add one so the
+            // new header starts on its own line.
+            if copy.blocks.isEmpty { copy.root.trailing += "\n" }
+            else { copy.blocks[copy.blocks.count - 1].body.trailing += "\n" }
+        }
+        let header = "[" + path.map(Toml.encodeKey).joined(separator: ".") + "]\n"
+        copy.blocks.append(Block(
+            leading: rendered.isEmpty ? "" : "\n", kind: .table,
+            headerRaw: header, path: path,
+            body: Body(entries: [Self.makeEntry(key: key, valueToken: token,
+                                                indent: "", newline: "\n")])))
+        return copy
+    }
+
     /// Indices into `blocks` of the array-of-tables ELEMENT HEADERS at `path`,
     /// in document order. (Use `blockRangesOfArrayOfTables` to get each
     /// element's full owned span, header + sub-tables.)
@@ -115,5 +213,92 @@ public extension Toml.Annotated {
             ranges.append(s..<e)
         }
         return ranges
+    }
+}
+
+// MARK: - Private raw-surgery helpers (the v2.1.0 value ops)
+
+private extension Toml.Annotated {
+
+    /// Replace ONLY the value token inside `entry.raw` — the crux of the set
+    /// ops. The assignment `=` is found with the same string-aware scan the
+    /// parser uses (`lexFindEq` — a `#` never precedes it in a valid entry);
+    /// the value span runs from the first non-space/tab after it to the END
+    /// of the last content token (strings scanned whole via `lexScanQuoted`,
+    /// `#` comments and whitespace never extend it). Everything before and
+    /// after the span — indent, key spelling, `=` spacing, the same-line
+    /// comment, the terminator — is re-emitted verbatim. Interior comments of
+    /// a multi-line value sit INSIDE the span, so they are replaced with the
+    /// old value; the comment after the last content survives.
+    static func settingRaw(_ entry: Entry, to token: String) -> Entry {
+        let a = Array(entry.raw.unicodeScalars)
+        guard let eq = Toml.lexFindEq(a) else { return entry }
+        var start = eq + 1
+        while start < a.count && (a[start] == " " || a[start] == "\t") { start += 1 }
+        var i = start
+        var end = start                              // end of the last content token
+        while i < a.count {
+            let c = a[i]
+            if c == "#" {                            // comment → never content
+                while i < a.count && a[i] != "\n" { i += 1 }
+                continue
+            }
+            if c == "\"" || c == "'" {
+                let (next, _, _) = Toml.lexScanQuoted(a, i)
+                end = min(next, a.count)
+                i = next
+                continue
+            }
+            if c == " " || c == "\t" || c == "\n" || c == "\r" { i += 1; continue }
+            i += 1
+            end = i
+        }
+        var e = entry
+        e.raw = String(String.UnicodeScalarView(a[0..<start])) + token
+              + String(String.UnicodeScalarView(a[end...]))
+        e.valueText = token
+        return e
+    }
+
+    /// A fresh `key = token` entry with the given surrounding style. `key`
+    /// is one literal segment, spelled through `encodeKey` (quoted when not
+    /// a bare key); no banner is fabricated (`leading` stays empty).
+    static func makeEntry(key: String, valueToken: String,
+                          indent: String, newline: String) -> Entry {
+        Entry(leading: "",
+              raw: indent + Toml.encodeKey(key) + " = " + valueToken + newline,
+              key: [key], valueText: valueToken)
+    }
+
+    /// Append `key = token` after `body`'s last entry — before its trailing
+    /// trivia, so a blank-line separator stays put — inheriting the last
+    /// sibling's indent and line terminator. An empty body uses no indent and
+    /// `fallbackTerminator` (the block header's). A final sibling with no
+    /// terminator (EOF) gets one added first so the new entry starts on its
+    /// own line.
+    static func appending(_ body: Body, key: String, token: String,
+                          fallbackTerminator: String) -> Body {
+        var b = body
+        let indent: String
+        let newline: String
+        if let sib = b.entries.last {
+            indent = String(String.UnicodeScalarView(
+                Array(sib.raw.unicodeScalars).prefix { $0 == " " || $0 == "\t" }))
+            newline = sib.raw.hasSuffix("\r\n") ? "\r\n" : "\n"
+            if !sib.raw.hasSuffix("\n") {
+                b.entries[b.entries.count - 1].raw += newline
+            }
+        } else {
+            indent = ""
+            newline = fallbackTerminator
+        }
+        b.entries.append(makeEntry(key: key, valueToken: token,
+                                   indent: indent, newline: newline))
+        return b
+    }
+
+    /// The line-terminator style of a header line (`\r\n` or `\n`).
+    static func terminator(of headerRaw: String) -> String {
+        headerRaw.hasSuffix("\r\n") ? "\r\n" : "\n"
     }
 }

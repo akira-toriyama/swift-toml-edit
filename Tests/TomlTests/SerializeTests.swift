@@ -65,4 +65,53 @@ import Foundation
         guard case .table(let kvs) = t else { Issue.record("table"); return }
         #expect(kvs[0].value == .string("tab\tquote\"newline\nbackslash\\"))
     }
+
+    // MARK: - Toml.encode (lossy `Toml.Value` → value token, v2.1.0)
+
+    @Test func encodeScalars() {
+        #expect(Toml.encode(.string("plain")) == #""plain""#)
+        #expect(Toml.encode(.string("say \"hi\"\n")) == #""say \"hi\"\n""#)
+        #expect(Toml.encode(.int(42)) == "42")
+        #expect(Toml.encode(.int(-7)) == "-7")
+        #expect(Toml.encode(.bool(true)) == "true")
+        #expect(Toml.encode(.bool(false)) == "false")
+        #expect(Toml.encode(.double(1.5)) == "1.5")
+        #expect(Toml.encode(.double(2)) == "2.0")     // float stays float-shaped
+    }
+
+    @Test func encodeArrays() {
+        #expect(Toml.encode(.array([])) == "[]")
+        #expect(Toml.encode(.array([.string("a"), .string("b")])) == #"["a", "b"]"#)
+        #expect(Toml.encode(.array([.int(1), .array([.bool(true)])])) == "[1, [true]]")
+    }
+
+    @Test func encodeArrayOfTablesBestEffort() {
+        // Out of the v2.1.0 contract, but pinned: an accidental
+        // `.arrayOfTables` still emits VALID TOML (array of inline tables).
+        #expect(Toml.encode(.arrayOfTables([Toml.Row(fields: ["a": .int(1)])]))
+                == "[{a = 1}]")
+    }
+
+    @Test func encodeInlineTableSortsKeys() {
+        // `[String: Value]` is unordered — encode sorts keys so the output is
+        // deterministic (byte-stable across runs).
+        #expect(Toml.encode(.table(["b": .int(2), "a": .string("x")]))
+                == #"{a = "x", b = 2}"#)
+        #expect(Toml.encode(.table([:])) == "{}")
+        #expect(Toml.encode(.table(["needs quote": .bool(true)]))
+                == #"{"needs quote" = true}"#)
+    }
+
+    @Test func encodeOutputReparsesToSameValue() throws {
+        // The emitted token round-trips through the lossy grammar unchanged.
+        let values: [Toml.Value] = [
+            .string("a \"b\" c"), .int(9), .bool(false),
+            .array([.string("x"), .int(1)]),
+            .table(["k": .string("v"), "n": .int(3)]),
+        ]
+        for v in values {
+            let doc = Toml.parseFlat("k = \(Toml.encode(v))")
+            #expect(doc.tables[""]?["k"] == v, "round-trip of \(v)")
+        }
+    }
 }

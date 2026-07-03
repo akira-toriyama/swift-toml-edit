@@ -37,8 +37,12 @@
   dict key (2.0.0) — a typed location that can't shadow a user key and rides
   on value-copy when a consumer clones a row. `parseFlat` keeps plain
   `[[String: Value]]` rows (its flat consumers don't attribute warnings).
-- Edit ops are deliberately MINIMAL (AoT reorder/delete + serialize).
-  Arbitrary-key value rewrite and from-scratch emit are YAGNI — do not add them.
+- Edit ops are deliberately MINIMAL: AoT reorder/delete + serialize, and —
+  since v2.1.0 (t-12az, facet's config auto-persist prereq) — per-element
+  VALUE writes (`settingValue` / `upsertingValue` on one AoT element,
+  `settingArrayValue` under a std table, values spelled via the public
+  `Toml.encode`). From-scratch emit and APPENDING a whole new AoT element
+  stay YAGNI — do not add them.
 
 ## Invariants (death-before-violation)
 - **Round-trip byte-identity**: if you don't change a block, read→write is
