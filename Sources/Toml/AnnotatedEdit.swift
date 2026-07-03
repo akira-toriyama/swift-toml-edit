@@ -124,19 +124,25 @@ public extension Toml.Annotated {
     /// trailing trivia), inheriting that sibling's indent + line terminator
     /// (facet: give an unnamed workspace section a `label`). A final sibling
     /// lacking a terminator gets one added — the one neighbouring byte an
-    /// edit may touch. A missing element is still a no-op: appending a whole
-    /// new `[[path]]` element is out of scope (v2.1.0).
+    /// edit may touch. No-ops, never invalid TOML: a missing element
+    /// (appending a whole new `[[path]]` element is out of scope, v2.1.0),
+    /// and a `key` already defined another way — by a dotted sibling
+    /// (`key.x = …`) or a sub-block the element owns (`[path.key]`).
     func upsertingValue(_ value: Toml.Value, inArrayOfTablesElement path: [String],
                         ordinal: Int, forKey key: String) -> Self {
-        let heads = blockIndices(ofArrayOfTablesAt: path)
-        guard heads.indices.contains(ordinal) else { return self }
-        let bi = heads[ordinal]
+        let ranges = blockRangesOfArrayOfTables(at: path)
+        guard ranges.indices.contains(ordinal) else { return self }
+        let bi = ranges[ordinal].lowerBound
         let token = Toml.encode(value)
         var copy = self
         if let ei = blocks[bi].body.entries.firstIndex(where: { $0.key == [key] }) {
             copy.blocks[bi].body.entries[ei] =
                 Self.settingRaw(blocks[bi].body.entries[ei], to: token)
         } else {
+            let owned = blocks[(bi + 1)..<ranges[ordinal].upperBound]
+            guard !Self.appendCollides(key: key, body: blocks[bi].body,
+                                       basePath: path, subBlocks: owned)
+            else { return self }
             copy.blocks[bi].body = Self.appending(
                 blocks[bi].body, key: key, token: token,
                 fallbackTerminator: Self.terminator(of: blocks[bi].headerRaw))
@@ -149,7 +155,11 @@ public extension Toml.Annotated {
     /// `upsertingValue`; when no such table exists at all, a NEW block is
     /// created at the document end: one blank separator line (the block's
     /// `leading` — omitted in an empty document), a newline-terminated
-    /// header, then the entry. An empty `path` is a no-op.
+    /// header, then the entry. No-ops, never invalid TOML: an empty `path`;
+    /// a `key` already defined another way in the table (dotted entry /
+    /// `[path.key]` sub-block); and — on the create path — a `path` that
+    /// collides with an existing definition (an array-of-tables at any
+    /// prefix, or a key-defined node a header cannot redefine or extend).
     func settingArrayValue(_ elements: [Toml.Value], atTable path: [String],
                            forKey key: String) -> Self {
         guard !path.isEmpty else { return self }
@@ -160,6 +170,9 @@ public extension Toml.Annotated {
                 copy.blocks[bi].body.entries[ei] =
                     Self.settingRaw(blocks[bi].body.entries[ei], to: token)
             } else {
+                guard !Self.appendCollides(key: key, body: blocks[bi].body,
+                                           basePath: path, subBlocks: blocks[...])
+                else { return self }
                 copy.blocks[bi].body = Self.appending(
                     blocks[bi].body, key: key, token: token,
                     fallbackTerminator: Self.terminator(of: blocks[bi].headerRaw))
@@ -167,14 +180,15 @@ public extension Toml.Annotated {
             return copy
         }
         // No `[path]` anywhere → append a new std-table block at the end —
-        // unless the path already names an ARRAY-of-tables, where a `[path]`
-        // header would be a redefinition (invalid TOML): no-op instead.
-        guard !blocks.contains(where: { $0.kind == .arrayElement && $0.path == path })
+        // unless the header would redefine or extend an existing definition
+        // (invalid TOML, or an AoT-bound header): no-op instead.
+        guard !Self.headerCollides(path: path, root: root, blocks: blocks)
         else { return self }
         let rendered = render()
-        if !rendered.isEmpty && !rendered.hasSuffix("\n") {
+        if !rendered.isEmpty && rendered.unicodeScalars.last != "\n" {
             // The document's final line has no terminator — add one so the
-            // new header starts on its own line.
+            // new header starts on its own line. (Scalar-level check: a CRLF
+            // end folds into one Character, so hasSuffix("\n") would misfire.)
             if copy.blocks.isEmpty { copy.root.trailing += "\n" }
             else { copy.blocks[copy.blocks.count - 1].body.trailing += "\n" }
         }
@@ -285,7 +299,10 @@ private extension Toml.Annotated {
             indent = String(String.UnicodeScalarView(
                 Array(sib.raw.unicodeScalars).prefix { $0 == " " || $0 == "\t" }))
             newline = sib.raw.hasSuffix("\r\n") ? "\r\n" : "\n"
-            if !sib.raw.hasSuffix("\n") {
+            if sib.raw.unicodeScalars.last != "\n" {
+                // Scalar-level check — "\r\n" folds into ONE Character, so
+                // hasSuffix("\n") would treat a CRLF-terminated sibling as
+                // unterminated and append a spurious blank line.
                 b.entries[b.entries.count - 1].raw += newline
             }
         } else {
@@ -300,5 +317,45 @@ private extension Toml.Annotated {
     /// The line-terminator style of a header line (`\r\n` or `\n`).
     static func terminator(of headerRaw: String) -> String {
         headerRaw.hasSuffix("\r\n") ? "\r\n" : "\n"
+    }
+
+    /// Whether appending an entry `key = …` into the body at `basePath`
+    /// would COLLIDE with an existing definition and render invalid TOML:
+    /// a dotted sibling entry (`key.x = …` — `key` is a dotted-key table),
+    /// or a sub-block at `basePath.key` (or deeper) among `subBlocks` —
+    /// pass the element's OWNED block slice for an AoT element (a sub-header
+    /// binds to its most recent element), or all blocks for a std table.
+    static func appendCollides(key: String, body: Body, basePath: [String],
+                               subBlocks: ArraySlice<Block>) -> Bool {
+        if body.entries.contains(where: { $0.key.first == key }) { return true }
+        return subBlocks.contains {
+            $0.path.count > basePath.count
+                && Array($0.path.prefix(basePath.count)) == basePath
+                && $0.path[basePath.count] == key
+        }
+    }
+
+    /// Whether creating a `[path]` header would redefine or extend an
+    /// existing definition — i.e. the render would be invalid TOML (or, for
+    /// the AoT-prefix case, valid but bound to the WRONG place):
+    ///   - an array-of-tables at any non-strict prefix of `path` (an exact
+    ///     match is a redefinition; a strict prefix means the header would
+    ///     bind inside the AoT's LAST element rather than at root);
+    ///   - a KEY-defined node on `path`: within a scope `base` (the root or
+    ///     a block), an entry whose first key segment is `path`'s next
+    ///     segment after `base` makes that node a scalar / inline table /
+    ///     dotted-key table — all closed to headers.
+    static func headerCollides(path p: [String], root: Body, blocks: [Block]) -> Bool {
+        if blocks.contains(where: {
+            $0.kind == .arrayElement && $0.path.count <= p.count
+                && Array(p.prefix($0.path.count)) == $0.path
+        }) { return true }
+        func keyDefines(_ base: [String], _ body: Body) -> Bool {
+            guard p.count > base.count, Array(p.prefix(base.count)) == base
+            else { return false }
+            return body.entries.contains { $0.key.first == p[base.count] }
+        }
+        if keyDefines([], root) { return true }
+        return blocks.contains { keyDefines($0.path, $0.body) }
     }
 }

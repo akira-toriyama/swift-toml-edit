@@ -265,6 +265,35 @@ import Foundation
         #expect(out == "[[r]]\nx = 1\nlabel = \"z\"\n")
     }
 
+    @Test func upsertAppendKeepsCRLFWithoutBlankLine() throws {
+        // "\r\n" folds into ONE Character in Swift — the missing-terminator
+        // check must be scalar-level or a CRLF sibling gains a spurious
+        // second terminator (blank line + neighbour bytes mutated).
+        let src = "[[r]]\r\na = 1\r\n"
+        let doc = try Toml.Annotated(parsing: src)
+        let out = doc.upsertingValue(.string("x"), inArrayOfTablesElement: ["r"],
+                                     ordinal: 0, forKey: "label").render()
+        #expect(out == "[[r]]\r\na = 1\r\nlabel = \"x\"\r\n")
+    }
+
+    @Test func upsertRefusesDottedSiblingCollision() throws {
+        // `sub.x = 1` defines `sub` as a dotted-key table; appending `sub = …`
+        // would render invalid TOML (duplicate key) → no-op.
+        let src = "[[r]]\nsub.x = 1\n"
+        let doc = try Toml.Annotated(parsing: src)
+        #expect(doc.upsertingValue(.int(9), inArrayOfTablesElement: ["r"],
+                                   ordinal: 0, forKey: "sub").render() == src)
+    }
+
+    @Test func upsertRefusesOwnedSubBlockCollision() throws {
+        // The element owns a `[r.sub]` block; appending `sub = …` to the
+        // element body would render invalid TOML (`sub` is a table) → no-op.
+        let src = "[[r]]\na = 1\n\n[r.sub]\nz = 1\n"
+        let doc = try Toml.Annotated(parsing: src)
+        #expect(doc.upsertingValue(.int(9), inArrayOfTablesElement: ["r"],
+                                   ordinal: 0, forKey: "sub").render() == src)
+    }
+
     @Test func upsertOrdinalMissIsNoOp() throws {
         let src = "[[r]]\nx = 1\n"
         let doc = try Toml.Annotated(parsing: src)
@@ -354,6 +383,56 @@ import Foundation
         let doc = try Toml.Annotated(parsing: src)
         #expect(doc.settingArrayValue([.int(1)], atTable: ["tags"],
                                       forKey: "defined").render() == src)
+        // A path whose PREFIX is an AoT is refused too: a `[a.b]` header
+        // would bind inside the LAST `[[a]]` element, not at root — never
+        // what the caller meant.
+        let src2 = "[[a]]\nx = 1\n"
+        let doc2 = try Toml.Annotated(parsing: src2)
+        #expect(doc2.settingArrayValue([.int(1)], atTable: ["a", "b"],
+                                       forKey: "k").render() == src2)
+    }
+
+    @Test func setArrayValueRefusesKeyDefinedPathCollisions() throws {
+        // Creating a `[path]` header where any segment of `path` is already
+        // KEY-defined (a scalar, an inline table, or a dotted key — all
+        // closed to headers) would render invalid TOML → no-op.
+        for (src, path) in [
+            ("tags = 1\n",                 ["tags"]),            // scalar
+            ("tags = { x = 1 }\n",         ["tags"]),            // inline table
+            ("tags.defined = [1]\n",       ["tags"]),            // dotted key at root
+            ("a = 1\n",                    ["a", "b"]),          // scalar prefix
+            ("[a]\nb.c = 1\n",             ["a", "b"]),          // dotted key in a block
+        ] {
+            let doc = try Toml.Annotated(parsing: src)
+            #expect(doc.settingArrayValue([.string("z")], atTable: path,
+                                          forKey: "defined").render() == src,
+                    "expected no-op for \(src)")
+        }
+    }
+
+    @Test func setArrayValueRefusesKeyCollisionsInExistingTable() throws {
+        // The table exists but `key` is already defined there another way —
+        // a dotted entry (`defined.inner = …`) or a sub-table header
+        // (`[tags.defined]`). Appending `defined = […]` would render invalid
+        // TOML → no-op.
+        let dotted = "[tags]\ndefined.inner = 1\n"
+        let doc1 = try Toml.Annotated(parsing: dotted)
+        #expect(doc1.settingArrayValue([.string("z")], atTable: ["tags"],
+                                       forKey: "defined").render() == dotted)
+        let subTable = "[tags]\nx = 1\n\n[tags.defined]\ny = 2\n"
+        let doc2 = try Toml.Annotated(parsing: subTable)
+        #expect(doc2.settingArrayValue([.string("z")], atTable: ["tags"],
+                                       forKey: "defined").render() == subTable)
+    }
+
+    @Test func setArrayValueCreateKeepsCRLFDocEnd() throws {
+        // A CRLF-terminated document already ends with a newline — the
+        // normalization must not add a stray LF (scalar-level check).
+        let src = "x = 1\r\n"
+        let doc = try Toml.Annotated(parsing: src)
+        let out = doc.settingArrayValue([.string("a")],
+                                        atTable: ["tags"], forKey: "defined").render()
+        #expect(out == "x = 1\r\n\n[tags]\ndefined = [\"a\"]\n")
     }
 
     // MARK: - On a real config (wand's 4 cursor rules)
