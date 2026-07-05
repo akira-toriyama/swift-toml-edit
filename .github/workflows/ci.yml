@@ -29,12 +29,12 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
         with:
           xcode-version: latest-stable
       # Zero-dep → key the SPM cache on Package.swift only (no Package.resolved).
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: |
             .build
@@ -54,7 +54,7 @@ jobs:
     timeout-minutes: 20
     container: swift:6.0
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Show toolchain
         run: swift --version
       - name: Build (release)
@@ -71,9 +71,9 @@ jobs:
     timeout-minutes: 20
     container: swift:6.0
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: "stable"
       - name: Install toml-test (pinned)
