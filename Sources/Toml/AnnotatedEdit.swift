@@ -46,8 +46,12 @@ public extension Toml.Annotated {
     /// blocks it owns (`[path.sub]`, `[[path.sub]]`, …) travel together — so an
     /// element's nested tables stay bound to it. The elements' positions
     /// relative to unrelated blocks are preserved. An invalid permutation is a
-    /// no-op.
+    /// no-op — as is a path whose element ownership is non-contiguous (an
+    /// unrelated block sits between an element's header and a sub-table it
+    /// owns), where a clean move is impossible without stranding that
+    /// sub-table (see `arrayOfTablesOwnershipIsContiguous`).
     func reorderingArrayOfTables(at path: [String], _ order: [Int]) -> Self {
+        guard arrayOfTablesOwnershipIsContiguous(at: path) else { return self }
         let ranges = blockRangesOfArrayOfTables(at: path)
         let n = ranges.count
         guard order.count == n, Set(order) == Set(0..<n) else { return self }
@@ -76,8 +80,11 @@ public extension Toml.Annotated {
     /// The WHOLE element — its `[[path]]` header, body, attached leading
     /// trivia, AND any sub-table blocks it owns — is removed (otherwise an
     /// orphaned `[path.sub]` would re-bind to the wrong element or fail to
-    /// parse). An out-of-range ordinal is a no-op.
+    /// parse). An out-of-range ordinal is a no-op — as is a path whose element
+    /// ownership is non-contiguous (see `arrayOfTablesOwnershipIsContiguous`),
+    /// where removing the contiguous slice would strand an owned sub-table.
     func removingArrayOfTablesElement(at path: [String], ordinal: Int) -> Self {
+        guard arrayOfTablesOwnershipIsContiguous(at: path) else { return self }
         let ranges = blockRangesOfArrayOfTables(at: path)
         guard ranges.indices.contains(ordinal) else { return self }
         var copy = self
@@ -181,8 +188,13 @@ public extension Toml.Annotated {
         }
         // No `[path]` anywhere → append a new std-table block at the end —
         // unless the header would redefine or extend an existing definition
-        // (invalid TOML, or an AoT-bound header): no-op instead.
-        guard !Self.headerCollides(path: path, root: root, blocks: blocks)
+        // (invalid TOML, or an AoT-bound header), OR the appended `key` would
+        // collide with an existing CHILD block at `path.key` (a `[[path.key]]`
+        // / `[path.key]` / deeper block that exists even though no `[path]`
+        // header does): the created `key = […]` then duplicates that child.
+        // Either renders invalid TOML, so no-op instead.
+        guard !Self.headerCollides(path: path, root: root, blocks: blocks),
+              !Self.appendCollides(key: key, body: Body(), basePath: path, subBlocks: blocks[...])
         else { return self }
         let rendered = render()
         if !rendered.isEmpty && rendered.unicodeScalars.last != "\n" {
@@ -227,6 +239,32 @@ public extension Toml.Annotated {
             ranges.append(s..<e)
         }
         return ranges
+    }
+
+    /// Whether every block that is a strict descendant of the array-of-tables
+    /// at `path` (a sub-table `[path.x]` / `[[path.x]]` / deeper that an element
+    /// owns) sits INSIDE one of the contiguous element ranges. It is false when
+    /// an unrelated block is interleaved between an element's header and a
+    /// sub-table it owns: TOML binds that sub-table to the element by
+    /// most-recent-definition regardless of the intervening block, but the
+    /// element's owned span (`blockRangesOfArrayOfTables`) is a contiguous run
+    /// that stops at the unrelated block — so a structural move (reorder /
+    /// remove) would leave the sub-table behind, re-binding it to the wrong
+    /// element (invalid TOML or silent corruption). The structural ops no-op
+    /// when this is false rather than risk that; a plain edit / value write is
+    /// unaffected. (Sub-tables placed immediately after their header — every
+    /// real family config — are contiguous, so this never fires in practice.)
+    /// Internal: an implementation detail of the reorder/remove no-op guard,
+    /// not part of the public edit API.
+    internal func arrayOfTablesOwnershipIsContiguous(at path: [String]) -> Bool {
+        let ranges = blockRangesOfArrayOfTables(at: path)
+        guard !ranges.isEmpty else { return true }
+        for i in blocks.indices
+        where blocks[i].path.count > path.count
+            && Array(blocks[i].path.prefix(path.count)) == path {
+            if !ranges.contains(where: { $0.contains(i) }) { return false }
+        }
+        return true
     }
 }
 

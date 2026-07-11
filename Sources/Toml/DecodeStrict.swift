@@ -47,7 +47,15 @@ struct StrictParser {
         while i < a.count, a[i] == " " || a[i] == "\t" { i += 1 }
     }
     mutating func skipSpacesAndNewlines() {
-        while i < a.count, a[i] == " " || a[i] == "\t" || a[i] == "\n" || a[i] == "\r" { i += 1 }
+        while i < a.count {
+            let c = a[i]
+            if c == " " || c == "\t" || c == "\n" { i += 1; continue }
+            // A CR counts only as part of a CRLF; a lone CR is an invalid
+            // control char — stop so the caller's trailing-char / element check
+            // rejects it (`a = [1,\r2]`, `a = 1\r`).
+            if c == "\r", i + 1 < a.count, a[i + 1] == "\n" { i += 2; continue }
+            break
+        }
     }
 
     // MARK: value dispatch

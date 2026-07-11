@@ -3,7 +3,7 @@ import Foundation
 @testable import Toml
 
 // Behavioral contract of the LOSSY read projection (`parse` / `parseFlat` /
-// `Value` / `Document` / `lineKey` / accessors) — ported from sill's
+// `Value` / `Document` / `Row` + `SourceSpan` / accessors) — ported from sill's
 // `TomlTests` so the five consumers see byte-identical behavior after the
 // swap. This locks what the projection MUST preserve; it is independent of
 // the lossless `Annotated` round-trip (covered in RoundTripTests).

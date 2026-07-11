@@ -153,7 +153,17 @@ extension Toml {
                 // (`[a.b.c]` then `[a]` then `b.c.t = …` is invalid) nor into an
                 // inline table.
                 switch t.kind {
-                case .dotted, .implicit: sub = t
+                case .dotted: sub = t
+                case .implicit:
+                    // Extending an implicit super-table with a dotted key
+                    // DEFINES it, sealing it against a later `[header]` on the
+                    // same path: `[a.b.c]` / `[a]` / `b.x = 1` / `[a.b]` is a
+                    // duplicate-table redefinition (rejected by the reference
+                    // decoders). Promote implicit → dotted — still open to more
+                    // sibling dotted keys and to DEEPER headers (`[a.b.d]`
+                    // descends through it), but an exact-path `[a.b]` now hits
+                    // the `.dotted` case in `defineHeader` and is rejected.
+                    t.kind = .dotted; sub = t
                 case .inline: throw fail("cannot extend inline table '\(head)'")
                 case .header:
                     throw fail("cannot extend table '\(head)' with a dotted key")
