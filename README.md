@@ -20,8 +20,9 @@ preserved.
 The 1.0 bar — **full TOML 1.0 round-trip** — is **met**: the library passes the
 entire official [`toml-test`](https://github.com/toml-lang/toml-test) 1.0.0 suite
 in **both directions** (decoder and encoder), and a byte-identity corpus +
-generative fuzzer guard the round-trip invariant on top. The public API is
-stable as of **v1.0.0** and follows semantic versioning.
+generative fuzzer guard the round-trip invariant on top. The public API follows
+semantic versioning; the current major is **v2** (v2.0 gave array-of-tables rows
+a typed `SourceSpan`; v2.1 added the per-element value edit ops and `Toml.encode`).
 
 ## Usage
 
@@ -67,7 +68,7 @@ option. See `CLAUDE.md` for the design and invariants.
 ## Install
 
 ```swift
-.package(url: "https://github.com/akira-toriyama/swift-toml-edit", from: "1.0.0")
+.package(url: "https://github.com/akira-toriyama/swift-toml-edit", from: "2.1.0")
 ```
 
 ```swift
