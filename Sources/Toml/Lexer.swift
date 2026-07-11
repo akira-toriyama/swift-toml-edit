@@ -224,12 +224,24 @@ extension Toml {
         return Toml.asciiTrim(String(out))
     }
 
-    /// Trim leading/trailing ASCII space, tab, CR and LF only. Used to trim the
-    /// newline-bounded edges of a (possibly multi-line) VALUE source.
+    /// Trim the whitespace / line-terminator edges of a (possibly multi-line)
+    /// VALUE source — but NOT a trailing LONE CR (U+000D not part of a CRLF).
+    /// A CRLF terminator's CR IS stripped (the LF precedes it here), yet a bare
+    /// CR is an invalid TOML control char that must survive to the strict
+    /// decoder to be rejected — stripping it would silently accept e.g.
+    /// `a = 1\r` (matching the deliberate VT/FF non-trim below).
     static func asciiTrim(_ s: String) -> String {
         var a = Array(s.unicodeScalars)
         while let f = a.first, f == " " || f == "\t" || f == "\n" || f == "\r" { a.removeFirst() }
-        while let l = a.last, l == " " || l == "\t" || l == "\n" || l == "\r" { a.removeLast() }
+        trailing: while let l = a.last {
+            switch l {
+            case " ", "\t": a.removeLast()
+            case "\n":
+                a.removeLast()
+                if a.last == "\r" { a.removeLast() }   // strip a CRLF pair whole
+            default: break trailing                     // stop at a lone CR (or content)
+            }
+        }
         return String(String.UnicodeScalarView(a))
     }
 

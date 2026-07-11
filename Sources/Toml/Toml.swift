@@ -152,7 +152,7 @@ public enum Toml {
                 continue
             }
 
-            guard let eq = line.firstIndex(of: "=") else {
+            guard let eq = firstTopLevelEquals(line) else {
                 throw ParseError(line: lineNo, message: "expected '=' in '\(line)'")
             }
             let key = String(line[..<eq]).trimmingCharacters(in: .whitespaces)
@@ -210,7 +210,7 @@ public enum Toml {
                 continue
             }
 
-            guard let eq = line.firstIndex(of: "=") else { continue }
+            guard let eq = firstTopLevelEquals(line) else { continue }
             let key = String(line[..<eq]).trimmingCharacters(in: .whitespaces)
             var rhs = String(line[line.index(after: eq)...])
                 .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -323,6 +323,30 @@ public enum Toml {
         return depth
     }
 
+    /// Index of the key/value separator `=` — the first `=` that is OUTSIDE a
+    /// `"…"`/`'…'` string, so an `=` inside a quoted key (`"a=b" = 1`) or an
+    /// inline-table entry key is not mistaken for the separator. Mirrors the
+    /// quote/escape tracking of `stripComment` / `splitCommaSeparated`; returns
+    /// nil if there is no top-level `=`.
+    private static func firstTopLevelEquals(_ s: String) -> String.Index? {
+        var inStr = false
+        var quote: Character = "\""
+        var escaped = false
+        for idx in s.indices {
+            let c = s[idx]
+            if inStr {
+                if escaped { escaped = false }
+                else if c == "\\" && quote == "\"" { escaped = true }
+                else if c == quote { inStr = false }
+            } else if c == "\"" || c == "'" {
+                inStr = true; quote = c
+            } else if c == "=" {
+                return idx
+            }
+        }
+        return nil
+    }
+
     private static func parseValue(_ raw: String, lineNo: Int) throws -> Value {
         if raw.hasPrefix("\"") && raw.hasSuffix("\"") && raw.count >= 2 {
             return .string(unescape(String(raw.dropFirst().dropLast())))
@@ -349,7 +373,7 @@ public enum Toml {
             let inner = String(raw.dropFirst().dropLast())
             var t: [String: Value] = [:]
             for entry in splitCommaSeparated(inner) {
-                guard let eq = entry.firstIndex(of: "=") else {
+                guard let eq = firstTopLevelEquals(entry) else {
                     throw ParseError(line: lineNo,
                                      message: "inline table entry '\(entry)' missing '='")
                 }
@@ -489,6 +513,18 @@ public enum Toml {
                               path: [String], value: Value) {
         guard !path.isEmpty else { return }
         if path.count == 1 { table[path[0]] = value; return }
+        // When `path[0]` already names an array-of-tables, a std sub-table
+        // header (`[aot.sub]`) targets the LAST element per TOML 1.0, so drill
+        // into its fields — NOT overwrite the AoT node with a fresh table
+        // (which would drop the array AND every field written to that element).
+        // Mirrors appendArrayOfTablesRow / writeIntoArrayOfTablesRow.
+        if case .arrayOfTables(var rows) = table[path[0]], !rows.isEmpty {
+            var last = rows[rows.count - 1]
+            write(&last.fields, path: Array(path.dropFirst()), value: value)
+            rows[rows.count - 1] = last
+            table[path[0]] = .arrayOfTables(rows)
+            return
+        }
         var inner: [String: Value]
         if case .table(let t) = table[path[0]] { inner = t } else { inner = [:] }
         write(&inner, path: Array(path.dropFirst()), value: value)
