@@ -48,8 +48,11 @@
 //   • `#` comments to end of line, quote- AND escape-aware (an
 //     escaped `\"` inside a basic string doesn't end it). CRLF is NOT
 //     actually split by these line parsers (a Swift `Character` folds
-//     "\r\n", so `split(separator: "\n")` sees a one-line document) —
-//     only the trailing-\r\n-of-a-single-line case survives the trim.
+//     "\r\n", so `split(separator: "\n")` sees a one-line document):
+//     a multi-entry CRLF document throws unless every interior CRLF
+//     hides inside quoted string content (then it parses, CRLF kept as
+//     garbage content — pinned in crlfInsideStringPinned). Only the
+//     trailing-\r\n-of-a-single-line case genuinely works, via the trim.
 //     `parseWithSpans` handles CRLF correctly (scalar-based lexLines).
 //
 // This projection deliberately does NOT surface multi-line strings

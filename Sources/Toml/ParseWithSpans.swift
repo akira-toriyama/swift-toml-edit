@@ -26,9 +26,19 @@
 // both throw — is CI-gated over the family's real configs, a hand corpus and
 // the shared fuzz grammar (ParseWithSpansTests). The deliberate deltas, each
 // pinned by a test, are all in the correct-TOML direction:
-//   • CRLF documents parse correctly here (multi-line arrays included), while
-//     `parse`'s Character-based `split(separator: "\n")` folds "\r\n" into one
-//     Character, sees a one-line document and throws;
+//   • CRLF terminators: documents parse correctly here (multi-line arrays
+//     included), while `parse`'s Character-based `split(separator: "\n")`
+//     folds "\r\n" into one Character, sees a one-line document and (for any
+//     multi-entry document) throws. The reverse arm: a raw CRLF *inside* a
+//     single-line string survives legacy's one-line fold as garbage content,
+//     but the tiler splits it and this parse throws;
+//   • triple-quoted spellings: any `"""`/`'''` string SPELLING in a value
+//     throws `unrecognised value` — the M1 grammar has no multi-line strings
+//     (the datetime stance). This is also the stability boundary: past a
+//     triple quote the legacy naive quote model and the lex model disagree
+//     (quote runs ≥ 4, `#`-after-parity), where legacy garbage-tolerates,
+//     wrongly throws, or would make this fold silently drop over-consumed
+//     lines — rejecting is the only contract that cannot silently diverge;
 //   • strictness inherited from the tiler rejects documents the old scanner
 //     silently tolerated: a control char in a comment (lexValidateComment), a
 //     degenerate header like `[]`, an invalid bare key (lexDottedPathStrict).
@@ -173,24 +183,27 @@ public extension Toml {
             let keyText = String(String.UnicodeScalarView(scalars[0..<eq]))
             let keyParts = splitDottedPath(keyText.trimmingCharacters(in: .whitespaces))
 
-            // M1 value grammar: only a multi-line ARRAY may span physical
-            // lines. Any other multi-line spelling (a real `"""…"""` string, a
-            // line-broken inline table) is outside the projection's grammar —
-            // the line-based `parse` rejected those too.
+            // M1 value grammar. A triple-quoted string SPELLING anywhere in
+            // the value is out of grammar (like a datetime) — and past it the
+            // legacy and lex quote models disagree, so garbage-tolerating
+            // would silently diverge from `parse`. Reject up front.
             var valueText = e.valueText
-            if valueText.unicodeScalars.contains(where: { $0 == "\n" || $0 == "\r" }) {
+            if containsMultilineStringSpelling(valueText) {
+                throw ParseError(line: line, message: "unrecognised value '\(valueText)'")
+            }
+            // Only a multi-line ARRAY may span physical lines (a line-broken
+            // inline table etc. is out of grammar). The test is "\n" ONLY: a
+            // LONE raw CR is not a line terminator — it flows to the decode,
+            // which treats it exactly as the line-based `parse` did.
+            if valueText.unicodeScalars.contains("\n") {
                 guard valueText.hasPrefix("[") else {
                     throw ParseError(line: line, message: "unrecognised value '\(valueText)'")
                 }
-                // A multi-line array's interior CRLF terminators must become
-                // LF before the decode: `decodeScalar` re-joins lines through
-                // `parseFlat`, whose Character-based split cannot see "\r\n".
-                // Safe: a raw CR-LF inside a value source is always a line
-                // terminator (single-line strings cannot cross lines, and an
-                // escaped `\r` is a backslash+r character pair, not a raw CR).
-                valueText = valueText.replacingOccurrences(of: "\r\n", with: "\n")
+                valueText = try normalizedMultilineArrayValue(valueText, line: line)
             }
-            guard let value = decodeScalar(valueText) else {
+            // Whole-value replay: any spelling the legacy grammar cannot
+            // consume as ONE value throws here — never a silent partial parse.
+            guard let value = decodeWholeScalar(valueText) else {
                 throw ParseError(line: line, message: "unrecognised value '\(valueText)'")
             }
 
@@ -244,5 +257,80 @@ public extension Toml {
         }
 
         return SpannedTree(tree: tree, entrySpans: entrySpans, headerSpans: headerSpans)
+    }
+}
+
+// MARK: - Fold-internal value helpers
+
+extension Toml {
+
+    /// Whether a value spelling contains a triple-quoted (`"""` / `'''`)
+    /// string — the multi-line string grammar the M1 projection excludes.
+    /// Everything past such an opener is where the legacy naive quote model
+    /// and `lexScanQuoted` can disagree, so the fold rejects it up front.
+    static func containsMultilineStringSpelling(_ s: String) -> Bool {
+        let a = Array(s.unicodeScalars)
+        var i = 0
+        while i < a.count {
+            let c = a[i]
+            if c == "\"" || c == "'" {
+                let (next, _, multiline) = lexScanQuoted(a, i)
+                if multiline { return true }
+                i = max(next, i + 1)
+                continue
+            }
+            i += 1
+        }
+        return false
+    }
+
+    /// Prepare a multi-line ARRAY value for the legacy-grammar replay:
+    /// normalize CRLF terminators to LF — only OUTSIDE string spans, so string
+    /// content is never rewritten — and throw on a raw CR left INSIDE a string
+    /// span (invalid TOML that legacy's one-line CRLF fold garbage-tolerated;
+    /// the replay cannot reproduce that output, so failing loudly beats
+    /// silently diverging).
+    static func normalizedMultilineArrayValue(_ s: String, line: Int) throws -> String {
+        let a = Array(s.unicodeScalars)
+        var out = String.UnicodeScalarView()
+        var i = 0
+        while i < a.count {
+            let c = a[i]
+            if c == "\"" || c == "'" {
+                let (next, _, _) = lexScanQuoted(a, i)
+                let end = min(max(next, i + 1), a.count)
+                if a[i..<end].contains("\r") {
+                    throw ParseError(line: line, message: "unrecognised value '\(s)'")
+                }
+                out.append(contentsOf: a[i..<end])
+                i = end
+                continue
+            }
+            if c == "\r", i + 1 < a.count, a[i + 1] == "\n" {
+                out.append("\n")
+                i += 2
+                continue
+            }
+            out.append(c)
+            i += 1
+        }
+        return String(out)
+    }
+
+    /// Decode a value spelling through the legacy grammar, requiring the
+    /// replay to consume it WHOLE: `parseFlat` parses `__v__ = <text>`, and
+    /// anything in the synthetic document beyond that single binding means the
+    /// naive model closed the value early (an out-of-grammar spelling) — nil,
+    /// so the fold throws instead of silently dropping the over-consumed tail.
+    /// (`decodeScalar` — `Annotated.Entry.value`'s lenient sibling — has no
+    /// wholeness requirement; the fold deliberately does.)
+    static func decodeWholeScalar(_ text: String) -> Toml.Value? {
+        let doc = Toml.parseFlat("__v__ = \(text)")
+        guard doc.arrays.isEmpty,
+              doc.tables.count == 1,
+              let root = doc.tables[""],
+              root.count == 1
+        else { return nil }
+        return root["__v__"]
     }
 }
