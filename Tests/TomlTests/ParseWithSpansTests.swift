@@ -10,13 +10,21 @@ import Foundation
 //    the proven line-based `parse(s)` — same tree, same `Row.span`s, or BOTH
 //    throw — over the family's real configs, a hand corpus of edge cases, and
 //    the shared fuzz grammar. The deliberate deltas, each pinned below:
-//      • CRLF: the line-based `parse` never actually split CRLF (a Swift
-//        `Character` folds "\r\n", so `split(separator: "\n")` sees one line
-//        and throws); the DOM derivation handles CRLF correctly —
-//        crlfDocumentSpansCountPhysicalLines.
+//      • CRLF terminators: the line-based `parse` never actually split CRLF
+//        (a Swift `Character` folds "\r\n", so `split(separator: "\n")` sees
+//        one line and, for a multi-entry document, throws); the DOM
+//        derivation handles CRLF correctly —
+//        crlfDocumentSpansCountPhysicalLines. Reverse arm: a raw CRLF
+//        *inside* a single-line string survives legacy's one-line fold as
+//        garbage content, the derivation throws — crlfInsideStringPinned.
+//      • triple-quoted spellings: any `"""`/`'''` string spelling in a value
+//        throws in the derivation (out of the M1 grammar, and past a triple
+//        quote the two quote models disagree) — where legacy garbage-parses,
+//        wrongly throws, or would trick a lenient replay into dropping keys —
+//        outOfGrammarQuoteSpellingsPinned.
 //      • tiler strictness: invalid TOML the old scanner silently tolerated
-//        (a control char in a comment, a degenerate `[]` header) now throws —
-//        tilerStrictnessDeltasArePinned.
+//        (a control char in a comment, a degenerate `[]` header, an invalid
+//        bare key) now throws — tilerStrictnessDeltasArePinned.
 //
 // 2. SPANS: per-entry key/value locations and per-header locations, exact to
 //    the line AND column — the capability chord's column-precise warnings
@@ -166,6 +174,82 @@ import Foundation
     let legacyEmpty = try Toml.parse(empty)
     #expect(legacyEmpty[""]?.asTable?["x"]?.asInt == 1)
     #expect(throws: Toml.ParseError.self) { try Toml.parseWithSpans(empty) }
+    // 3. an invalid bare key (lexDottedPathStrict: bare-key charset)
+    let bare = "[foo bar]\nx = 1\n"
+    let legacyBare = try Toml.parse(bare)
+    #expect(legacyBare["foo bar"]?.asTable?["x"]?.asInt == 1)
+    #expect(throws: Toml.ParseError.self) { try Toml.parseWithSpans(bare) }
+}
+
+@Test func loneCRValuesStayEquivalent() throws {
+    // A LONE raw CR (not part of a CRLF) inside a single-line value is
+    // invalid TOML that the legacy scanners tolerate; the fold's multi-line
+    // test is "\n" ONLY, so these flow to the shared grammar and stay
+    // equivalent rather than becoming an accidental delta.
+    expectEquivalent("k = \"a\rb\"\n")
+    expectEquivalent("k = 'a\rb'\n")
+    expectEquivalent("m = { a = \"x\ry\" }\n")
+    expectEquivalent("k = 1\r")                       // trailing lone CR at EOF
+    expectEquivalent("xs = [\"a\rb\"]\n")
+    let r = try Toml.parseWithSpans("k = \"a\rb\"\n")
+    #expect(r.tree["k"] == .string("a\rb"))
+}
+
+@Test func outOfGrammarQuoteSpellingsPinned() throws {
+    // Triple-quoted spellings are out of the M1 grammar and the boundary
+    // where the legacy naive quote model and the lex model disagree. The
+    // derivation THROWS on all of them; legacy variously garbage-parses or
+    // wrongly throws. Pinning each keeps the delta deliberate — and proves
+    // none of them can silently drop keys anymore.
+    // a) single-line triple quote: legacy garbage-parses.
+    let single = "s = \"\"\"one line\"\"\"\n"
+    let legacySingle = try Toml.parse(single)
+    #expect(legacySingle["s"] == .string("\"\"one line\"\""))
+    #expect(throws: Toml.ParseError.self) { try Toml.parseWithSpans(single) }
+    // b) quote-run-4 + comment parity: legacy keeps "#junk\"" as string body.
+    let parity = "a = \"\"\"\"x\"\"\" #junk\"\n"
+    let legacyParity = try Toml.parse(parity)
+    #expect(legacyParity["a"] == .string("\"\"\"x\"\"\" #junk"))
+    #expect(throws: Toml.ParseError.self) { try Toml.parseWithSpans(parity) }
+    // c) the over-consumption trap: the tiler sees an OPEN multi-line string
+    //    and swallows the next line — the fold must throw, never silently
+    //    return {a} while legacy returns {a, b}.
+    let swallow = "a = [ \"\"\"\"]\nb = 1\n"
+    let legacySwallow = try Toml.parse(swallow)
+    #expect(legacySwallow["b"]?.asInt == 1)
+    #expect(throws: Toml.ParseError.self) { try Toml.parseWithSpans(swallow) }
+    // d) same trap with a header coda: the [[t]] row must not vanish.
+    let swallowHeader = "a = [ \"\"\"\"]\n[[t]]\nn = 7\n"
+    let legacyHeader = try Toml.parse(swallowHeader)
+    #expect(legacyHeader["t"]?.asArrayOfTables?.count == 1)
+    #expect(throws: Toml.ParseError.self) { try Toml.parseWithSpans(swallowHeader) }
+    // e) valid TOML that legacy WRONGLY throws on (its quote parity leaves
+    //    the `]` inside a phantom string): both throw now — equivalent.
+    expectEquivalent("a = [ \"\"\"\"x\"\"\" ]\nb = \"y\"\n")
+    // f) CRLF inside a multi-line string inside an array: legacy's one-line
+    //    fold garbage-keeps the CRLF; a lenient replay would space-join it.
+    let crlfString = "xs = [\"\"\"a\r\nb\"\"\"]\n"
+    let legacyCrlf = try Toml.parse(crlfString)
+    #expect(legacyCrlf["xs"] != nil)
+    #expect(throws: Toml.ParseError.self) { try Toml.parseWithSpans(crlfString) }
+}
+
+@Test func crlfInsideStringPinned() throws {
+    // The CRLF delta's REVERSE arm: raw CRLF *inside* single-line string
+    // content. Legacy's Character-fold never splits it, so the whole document
+    // stays one parseable line and the CRLF survives as garbage string
+    // content; the tiler splits it into an unterminated string → throw.
+    let quoted = "k = \"a\r\nb\"\n"
+    let legacyQuoted = try Toml.parse(quoted)
+    #expect(legacyQuoted["k"] == .string("a\r\nb"))
+    #expect(throws: Toml.ParseError.self) { try Toml.parseWithSpans(quoted) }
+    // Same content inside a CRLF multi-line array: legacy happens to throw
+    // too (splitCommaSeparated keeps the raw CR in the element), and the
+    // derivation's string-aware normalization refuses to rewrite string
+    // interiors — both throw, and neither may silently space-join content.
+    let inArray = "xs = [\r\n\"a\r\nb\",\r\n]\r\n"
+    #expect(throws: Toml.ParseError.self) { try Toml.parse(inArray) }
+    #expect(throws: Toml.ParseError.self) { try Toml.parseWithSpans(inArray) }
 }
 
 @Test func tabIndentedEntryColumns() throws {
@@ -233,7 +317,6 @@ private func expectEquivalent(_ source: String,
         "\t[tab]\n\tk = 'v'\n",                      // tab-indented header + entry
         "9 = \"numeric bare key\"\n[10]\nx = 1\n",
         #"["a\tb"]"# + "\nx = 1\n",                  // escape-literal quoted key
-        "s = \"\"\"one line\"\"\"\n",                // garbage-tolerated single-line triple quote
         // Rejected by both (M1 grammar / structure):
         "d = 1979-05-27T07:32:00Z\n",                // datetime: outside the M1 grammar
         "s = \"\"\"\nreal multi-line\n\"\"\"\n",     // multi-line string
@@ -286,8 +369,9 @@ func equivalenceOnRealConfigs(_ name: String) throws {
 
 @Test func equivalenceOnFuzzCorpus() {
     // The shared fuzz grammar, LF-normalized (the CRLF delta is pinned in
-    // crlfDocumentSpansCountPhysicalLines — Character-based split can't see
-    // CRLF, so legacy would throw on every CRLF document).
+    // crlfDocumentSpansCountPhysicalLines / crlfInsideStringPinned —
+    // Character-based split can't see CRLF, so a multi-entry CRLF document
+    // throws in legacy unless its CRLFs hide inside quoted string content).
     var r = TomlFuzzGen.SplitMix64(seed: 0xC0FFEE_D0_0D)
     var bothParsed = 0
     for i in 0..<2000 {

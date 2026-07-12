@@ -29,7 +29,7 @@
 - **Lossy projection**: re-exposes the read API under the SAME names sill's
   `Toml` had — `parse` (nested, strict), `parseFlat` (flat, lenient), `Value`,
   `Document`, the accessors. The gated unification is DONE for the strict
-  path: `parseWithSpans` (2.2.0, t-0030/chord#159) re-derives the SAME nested
+  path: `parseWithSpans` (2.3.0, t-0030/chord#159) re-derives the SAME nested
   tree from the lossless DOM and adds per-entry/per-header line+column spans
   (`SpannedTree`/`PathSegment`/`EntrySpans`) for chord's column-precise
   `(config.toml:N:C)` warnings. Equivalence with the line-based `parse` is
