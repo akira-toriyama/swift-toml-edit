@@ -8,7 +8,7 @@
 // on one `[[path]]` element and `settingArrayValue` under a `[path]` table —
 // the surgical writes facet's config auto-persistence needs (t-12az): only
 // the value token inside one entry's `raw` is rewritten (via `Toml.encode`),
-// so comments / indent / spacing stay byte-verbatim. v2.2.0 adds the scalar
+// so comments / indent / spacing stay byte-verbatim. v2.3.0 adds the scalar
 // twin `settingValue(_:atTable:forKey:)` for a single `[path]` table entry
 // (facet's lens-desktop `[desktop.N] match`, t-sgqk) — same engine, same
 // guards. Still out of scope: from-scratch emit, and APPENDING a whole new

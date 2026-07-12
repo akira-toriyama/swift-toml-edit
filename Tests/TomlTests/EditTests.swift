@@ -435,7 +435,7 @@ import Foundation
         #expect(out == "x = 1\r\n\n[tags]\ndefined = [\"a\"]\n")
     }
 
-    // MARK: - Set a scalar value at a std table (v2.2.0)
+    // MARK: - Set a scalar value at a std table (v2.3.0)
 
     @Test func setValueReplacesExistingKeepingComment() throws {
         // Only the value token moves; the same-line comment, indent and `=`
