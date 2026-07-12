@@ -154,13 +154,17 @@ import Foundation
     // The other deliberate delta class: invalid TOML the old line scanner
     // silently tolerated now throws (the tiler is conformance-grade). Pin one
     // example per rule so the equivalence contract's exceptions stay explicit.
+    // (`try` stays out of #expect operands — Swift 6.0's macro expansion
+    // wraps them in non-throwing autoclosures.)
     // 1. a raw control char in a comment (lexValidateComment)
     let ctl = "k = 1 # a\u{0001}b\n"
-    #expect((try Toml.parse(ctl))["k"]?.asInt == 1)
+    let legacyCtl = try Toml.parse(ctl)
+    #expect(legacyCtl["k"]?.asInt == 1)
     #expect(throws: Toml.ParseError.self) { try Toml.parseWithSpans(ctl) }
     // 2. the degenerate empty header (lexDottedPathStrict: empty key)
     let empty = "[]\nx = 1\n"
-    #expect((try Toml.parse(empty))[""]?.asTable?["x"]?.asInt == 1)
+    let legacyEmpty = try Toml.parse(empty)
+    #expect(legacyEmpty[""]?.asTable?["x"]?.asInt == 1)
     #expect(throws: Toml.ParseError.self) { try Toml.parseWithSpans(empty) }
 }
 
@@ -265,7 +269,10 @@ func equivalenceOnRealConfigs(_ name: String) throws {
     // in the hand corpus).
     let source = try fixture("chord.config")
     let r = try Toml.parseWithSpans(source)
-    #expect(r.tree == (try Toml.parse(source)))
+    // `try` hoisted out of #expect: Swift 6.0's macro expansion wraps the
+    // operand in a non-throwing autoclosure (the Linux job's toolchain).
+    let expected = try Toml.parse(source)
+    #expect(r.tree == expected)
     let opts = try #require(r.tree["options"]?.asTable)
     #expect(!opts.isEmpty)
     for key in opts.keys {
