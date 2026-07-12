@@ -11,6 +11,10 @@
 //
 //   • `parse(_:)  throws -> [String: Value]`   — NESTED, STRICT (chord)
 //   • `parseFlat(_:) -> Document`              — FLAT, LENIENT (the 3)
+//   • `parseWithSpans(_:) throws -> SpannedTree` — the SAME nested strict
+//     tree, re-derived from the lossless DOM with per-entry/per-header
+//     line+column spans (ParseWithSpans.swift; chord's column-precise
+//     warnings). CI gates its equivalence with `parse`.
 //
 //   • chord wants a NESTED tree + STRICT throwing parse (dotted keys
 //     collapse, nested `[[a.b]]` arrays-of-tables, each AoT row a `Row`
@@ -42,7 +46,11 @@
 //     `0x…`, float (Double), bool. Int is tried before float so a bare
 //     `2` stays `.int`.
 //   • `#` comments to end of line, quote- AND escape-aware (an
-//     escaped `\"` inside a basic string doesn't end it). CRLF tolerated.
+//     escaped `\"` inside a basic string doesn't end it). CRLF is NOT
+//     actually split by these line parsers (a Swift `Character` folds
+//     "\r\n", so `split(separator: "\n")` sees a one-line document) —
+//     only the trailing-\r\n-of-a-single-line case survives the trim.
+//     `parseWithSpans` handles CRLF correctly (scalar-based lexLines).
 //
 // This projection deliberately does NOT surface multi-line strings
 // (`"""…"""`), date/time literals, integer underscores/octal/binary,
@@ -240,7 +248,8 @@ public enum Toml {
     /// (i.e. just past the leading indentation) — the `SourceSpan.column`
     /// for a header. A blank/all-whitespace line yields the column past its
     /// end; headers are never blank, so that case doesn't arise in practice.
-    private static func leadingColumn(_ line: String) -> Int {
+    /// Internal: the DOM-derived `parseWithSpans` reuses it for its headers.
+    static func leadingColumn(_ line: String) -> Int {
         line.prefix { $0 == " " || $0 == "\t" }.count + 1
     }
 
@@ -432,7 +441,9 @@ public enum Toml {
     /// segments intact (`a."b.c"` → `[a, "b.c" unquoted]`) and unquoting
     /// each segment. Plain `a.b.c` → `[a, b, c]` (identical to a naive
     /// split, so chord's quote-free paths are unchanged).
-    private static func splitDottedPath(_ s: String) -> [String] {
+    /// Internal: `parseWithSpans` re-lexes keys through this SAME finisher so
+    /// the derived tree keeps the projection's literal-escape key semantics.
+    static func splitDottedPath(_ s: String) -> [String] {
         scanDottedSegments(s).map { unquoteKey($0.trimmingCharacters(in: .whitespaces)) }
     }
 
@@ -508,9 +519,13 @@ public enum Toml {
     // wrapper differed from its `*Inner` twin only by a leading
     // `guard !path.isEmpty` (the recursion always passes a non-empty
     // `dropFirst` slice), so the pairs collapse to one function each.
+    //
+    // Internal (not private): the DOM-derived `parseWithSpans` folds through
+    // these SAME helpers, which is what makes its tree equivalent to `parse`'s
+    // by construction — do not fork them.
 
-    private static func write(_ table: inout [String: Value],
-                              path: [String], value: Value) {
+    static func write(_ table: inout [String: Value],
+                      path: [String], value: Value) {
         guard !path.isEmpty else { return }
         if path.count == 1 { table[path[0]] = value; return }
         // When `path[0]` already names an array-of-tables, a std sub-table
@@ -531,8 +546,8 @@ public enum Toml {
         table[path[0]] = .table(inner)
     }
 
-    private static func appendArrayOfTablesRow(_ table: inout [String: Value],
-                                               path: [String], span: SourceSpan) {
+    static func appendArrayOfTablesRow(_ table: inout [String: Value],
+                                       path: [String], span: SourceSpan) {
         guard !path.isEmpty else { return }
         if path.count == 1 {
             var rows: [Row]
@@ -556,7 +571,7 @@ public enum Toml {
         table[path[0]] = .table(inner)
     }
 
-    private static func writeIntoArrayOfTablesRow(
+    static func writeIntoArrayOfTablesRow(
         _ table: inout [String: Value], path: [String],
         key: [String], value: Value
     ) {
