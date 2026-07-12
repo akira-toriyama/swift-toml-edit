@@ -8,9 +8,11 @@
 // on one `[[path]]` element and `settingArrayValue` under a `[path]` table —
 // the surgical writes facet's config auto-persistence needs (t-12az): only
 // the value token inside one entry's `raw` is rewritten (via `Toml.encode`),
-// so comments / indent / spacing stay byte-verbatim. Still out of scope:
-// from-scratch emit, and APPENDING a whole new `[[path]]` element (facet
-// skips + logs that case).
+// so comments / indent / spacing stay byte-verbatim. v2.2.0 adds the scalar
+// twin `settingValue(_:atTable:forKey:)` for a single `[path]` table entry
+// (facet's lens-desktop `[desktop.N] match`, t-sgqk) — same engine, same
+// guards. Still out of scope: from-scratch emit, and APPENDING a whole new
+// `[[path]]` element (facet skips + logs that case).
 //
 // Trivia on edit (the wand#129 rule): an element moves/deletes WHOLE — its
 // banner comment travels with it (so a per-element comment never labels the
@@ -169,48 +171,19 @@ public extension Toml.Annotated {
     /// prefix, or a key-defined node a header cannot redefine or extend).
     func settingArrayValue(_ elements: [Toml.Value], atTable path: [String],
                            forKey key: String) -> Self {
-        guard !path.isEmpty else { return self }
-        let token = Toml.encode(.array(elements))
-        var copy = self
-        if let bi = blocks.firstIndex(where: { $0.kind == .table && $0.path == path }) {
-            if let ei = blocks[bi].body.entries.firstIndex(where: { $0.key == [key] }) {
-                copy.blocks[bi].body.entries[ei] =
-                    Self.settingRaw(blocks[bi].body.entries[ei], to: token)
-            } else {
-                guard !Self.appendCollides(key: key, body: blocks[bi].body,
-                                           basePath: path, subBlocks: blocks[...])
-                else { return self }
-                copy.blocks[bi].body = Self.appending(
-                    blocks[bi].body, key: key, token: token,
-                    fallbackTerminator: Self.terminator(of: blocks[bi].headerRaw))
-            }
-            return copy
-        }
-        // No `[path]` anywhere → append a new std-table block at the end —
-        // unless the header would redefine or extend an existing definition
-        // (invalid TOML, or an AoT-bound header), OR the appended `key` would
-        // collide with an existing CHILD block at `path.key` (a `[[path.key]]`
-        // / `[path.key]` / deeper block that exists even though no `[path]`
-        // header does): the created `key = […]` then duplicates that child.
-        // Either renders invalid TOML, so no-op instead.
-        guard !Self.headerCollides(path: path, root: root, blocks: blocks),
-              !Self.appendCollides(key: key, body: Body(), basePath: path, subBlocks: blocks[...])
-        else { return self }
-        let rendered = render()
-        if !rendered.isEmpty && rendered.unicodeScalars.last != "\n" {
-            // The document's final line has no terminator — add one so the
-            // new header starts on its own line. (Scalar-level check: a CRLF
-            // end folds into one Character, so hasSuffix("\n") would misfire.)
-            if copy.blocks.isEmpty { copy.root.trailing += "\n" }
-            else { copy.blocks[copy.blocks.count - 1].body.trailing += "\n" }
-        }
-        let header = "[" + path.map(Toml.encodeKey).joined(separator: ".") + "]\n"
-        copy.blocks.append(Block(
-            leading: rendered.isEmpty ? "" : "\n", kind: .table,
-            headerRaw: header, path: path,
-            body: Body(entries: [Self.makeEntry(key: key, valueToken: token,
-                                                indent: "", newline: "\n")])))
-        return copy
+        settingToken(Toml.encode(.array(elements)), atTable: path, forKey: key)
+    }
+
+    /// Set-or-insert `key = value` (one SCALAR entry) under the FIRST `[path]`
+    /// std table — the scalar twin of `settingArrayValue`, and the write facet's
+    /// config auto-persistence needs for a lens desktop's live-retargeted
+    /// `[desktop.N] match = "…"` (t-sgqk; `[desktop.N]` is a SINGLE table, so
+    /// the AoT-element ops can't reach it). Identical semantics + no-op guards;
+    /// the value is spelled by `Toml.encode`, so a string always becomes a
+    /// basic string, whatever the old quoting style.
+    func settingValue(_ value: Toml.Value, atTable path: [String],
+                      forKey key: String) -> Self {
+        settingToken(Toml.encode(value), atTable: path, forKey: key)
     }
 
     /// Indices into `blocks` of the array-of-tables ELEMENT HEADERS at `path`,
@@ -271,6 +244,57 @@ public extension Toml.Annotated {
 // MARK: - Private raw-surgery helpers (the v2.1.0 value ops)
 
 private extension Toml.Annotated {
+
+    /// The shared set-or-insert engine behind `settingValue(_:atTable:forKey:)`
+    /// and `settingArrayValue(_:atTable:forKey:)` — `token` is the value
+    /// already spelled by `Toml.encode`. In-place value-token surgery when
+    /// `key` exists in the FIRST `[path]` table; append when the table exists
+    /// without it; a NEW `[path]` block at the document end when no such table
+    /// exists — with the no-op guards both public docs describe.
+    func settingToken(_ token: String, atTable path: [String],
+                      forKey key: String) -> Self {
+        guard !path.isEmpty else { return self }
+        var copy = self
+        if let bi = blocks.firstIndex(where: { $0.kind == .table && $0.path == path }) {
+            if let ei = blocks[bi].body.entries.firstIndex(where: { $0.key == [key] }) {
+                copy.blocks[bi].body.entries[ei] =
+                    Self.settingRaw(blocks[bi].body.entries[ei], to: token)
+            } else {
+                guard !Self.appendCollides(key: key, body: blocks[bi].body,
+                                           basePath: path, subBlocks: blocks[...])
+                else { return self }
+                copy.blocks[bi].body = Self.appending(
+                    blocks[bi].body, key: key, token: token,
+                    fallbackTerminator: Self.terminator(of: blocks[bi].headerRaw))
+            }
+            return copy
+        }
+        // No `[path]` anywhere → append a new std-table block at the end —
+        // unless the header would redefine or extend an existing definition
+        // (invalid TOML, or an AoT-bound header), OR the appended `key` would
+        // collide with an existing CHILD block at `path.key` (a `[[path.key]]`
+        // / `[path.key]` / deeper block that exists even though no `[path]`
+        // header does): the created `key = …` then duplicates that child.
+        // Either renders invalid TOML, so no-op instead.
+        guard !Self.headerCollides(path: path, root: root, blocks: blocks),
+              !Self.appendCollides(key: key, body: Body(), basePath: path, subBlocks: blocks[...])
+        else { return self }
+        let rendered = render()
+        if !rendered.isEmpty && rendered.unicodeScalars.last != "\n" {
+            // The document's final line has no terminator — add one so the
+            // new header starts on its own line. (Scalar-level check: a CRLF
+            // end folds into one Character, so hasSuffix("\n") would misfire.)
+            if copy.blocks.isEmpty { copy.root.trailing += "\n" }
+            else { copy.blocks[copy.blocks.count - 1].body.trailing += "\n" }
+        }
+        let header = "[" + path.map(Toml.encodeKey).joined(separator: ".") + "]\n"
+        copy.blocks.append(Block(
+            leading: rendered.isEmpty ? "" : "\n", kind: .table,
+            headerRaw: header, path: path,
+            body: Body(entries: [Self.makeEntry(key: key, valueToken: token,
+                                                indent: "", newline: "\n")])))
+        return copy
+    }
 
     /// Replace ONLY the value token inside `entry.raw` — the crux of the set
     /// ops. The assignment `=` is found with the same string-aware scan the
