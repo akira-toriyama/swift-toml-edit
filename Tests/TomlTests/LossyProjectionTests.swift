@@ -71,6 +71,9 @@ import Foundation
     // `"a\tb"` table key stays the LITERAL backslash-t, never a tab. This
     // pins the divergence from the lossless DOM lookup (`lexDottedPath` →
     // decode); a future merge of the two dotted-path finishers must fail here.
+    // The DOM-derived `parseWithSpans` re-lexes keys through the LOSSY
+    // finisher and pins the same contract in
+    // spannedKeyEscapesStayLiteralLikeLossyParse (ParseWithSpansTests).
     let root = try Toml.parse(#"""
     ["a\tb"]
     x = 1

@@ -28,9 +28,15 @@
   not collide with the lossy `Toml.Value` / `Toml.Document` names.
 - **Lossy projection**: re-exposes the read API under the SAME names sill's
   `Toml` had — `parse` (nested, strict), `parseFlat` (flat, lenient), `Value`,
-  `Document`, the accessors. (Until the lossless parser passes full toml-test, the
-  projection is the proven sill line-parser, ported verbatim; unifying it onto
-  the lossless DOM is a later, gated step — before the consumer swap.)
+  `Document`, the accessors. The gated unification is DONE for the strict
+  path: `parseWithSpans` (2.2.0, t-0030/chord#159) re-derives the SAME nested
+  tree from the lossless DOM and adds per-entry/per-header line+column spans
+  (`SpannedTree`/`PathSegment`/`EntrySpans`) for chord's column-precise
+  `(config.toml:N:C)` warnings. Equivalence with the line-based `parse` is
+  CI-gated (ParseWithSpansTests: fixtures + hand corpus + shared fuzz
+  grammar); `parse` stays line-based until chord migrates (then it can
+  delegate), and `parseFlat` stays a line scanner BY DESIGN — its leniency
+  can't ride the strict tiler.
   Source attribution: `parse`'s `Value.arrayOfTables` holds `[Row]` (each row's
   `fields` + the `[[header]]` `SourceSpan` — see `Span.swift`), NOT a bare
   `[[String: Value]]`. This replaced the old synthetic `__line__`/`lineKey`

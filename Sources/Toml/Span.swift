@@ -14,8 +14,13 @@
 // clones a row to synthesize a new one — so it fits the row-clone desugaring
 // the family's config layers already use.
 //
-// Only the nested strict `parse` constructs `Row`s. `parseFlat` keeps its rows
-// as plain `[[String: Value]]` (its flat consumers don't need attribution).
+// Only the nested strict parses (`parse`, and its DOM-derived twin
+// `parseWithSpans`) construct `Row`s. `parseFlat` keeps its rows as plain
+// `[[String: Value]]` (its flat consumers don't need attribution).
+//
+// Row spans locate the `[[header]]`; ENTRY-level key/value locations (the
+// column-precise `(config.toml:N:C)` input) live in `parseWithSpans`'s
+// side index — see ParseWithSpans.swift.
 
 import Foundation
 
