@@ -435,6 +435,83 @@ import Foundation
         #expect(out == "x = 1\r\n\n[tags]\ndefined = [\"a\"]\n")
     }
 
+    // MARK: - Set a scalar value at a std table (v2.3.0)
+
+    @Test func setValueReplacesExistingKeepingComment() throws {
+        // Only the value token moves; the same-line comment, indent and `=`
+        // spacing stay verbatim. A literal-string old value becomes a basic
+        // string (the documented `Toml.encode` spelling).
+        let src = "[desktop.2]\ntype = \"lens\"\nmatch = 'app=Safari' # keep\n"
+        let doc = try Toml.Annotated(parsing: src)
+        let out = doc.settingValue(.string("app~=Code"),
+                                   atTable: ["desktop", "2"], forKey: "match").render()
+        #expect(out == "[desktop.2]\ntype = \"lens\"\nmatch = \"app~=Code\" # keep\n")
+    }
+
+    @Test func setValueAppendsToExistingTable() throws {
+        // The facet t-sgqk shape: a lens-desktop table whose config never
+        // spelled `match` gets one appended after the last entry.
+        let src = "[desktop.2]\ntype = \"lens\"\n"
+        let doc = try Toml.Annotated(parsing: src)
+        let out = doc.settingValue(.string("app~=Chrome"),
+                                   atTable: ["desktop", "2"], forKey: "match").render()
+        #expect(out == "[desktop.2]\ntype = \"lens\"\nmatch = \"app~=Chrome\"\n")
+    }
+
+    @Test func setValueCreatesTableAtEnd() throws {
+        let src = "x = 1\n"
+        let doc = try Toml.Annotated(parsing: src)
+        let out = doc.settingValue(.bool(true), atTable: ["flags"], forKey: "on").render()
+        #expect(out == "x = 1\n\n[flags]\non = true\n")
+        let doc2 = try Toml.Annotated(parsing: out)
+        #expect(doc2.blocks.last?.body.entry(forKey: "on")?.value == .bool(true))
+        #expect(doc2.render() == out)
+    }
+
+    @Test func setValueEmptyPathIsNoOp() throws {
+        let src = "x = 1\n"
+        let doc = try Toml.Annotated(parsing: src)
+        #expect(doc.settingValue(.int(1), atTable: [], forKey: "k").render() == src)
+    }
+
+    @Test func setValueRefusesKeyCollisions() throws {
+        // A dotted sibling (`match.x`) already defines `match` as a
+        // dotted-key table — appending `match = …` would be invalid TOML.
+        let src = "[desktop.2]\nmatch.x = 1\n"
+        let doc = try Toml.Annotated(parsing: src)
+        #expect(doc.settingValue(.string("v"), atTable: ["desktop", "2"],
+                                 forKey: "match").render() == src)
+        // A sub-block `[desktop.2.match]` claims the key the same way.
+        let src2 = "[desktop.2]\ntype = \"lens\"\n\n[desktop.2.match]\nx = 1\n"
+        let doc2 = try Toml.Annotated(parsing: src2)
+        #expect(doc2.settingValue(.string("v"), atTable: ["desktop", "2"],
+                                  forKey: "match").render() == src2)
+    }
+
+    @Test func setValueLeavesOtherBlocksByteIdentical() throws {
+        // Editing one table's value leaves every other block — comments,
+        // blank lines, the AoT sections — byte-for-byte untouched.
+        let src = """
+        # banner
+
+        [[desktop.1.section]]
+        label = "Main"   # first
+
+        [desktop.2]
+        type = "lens"
+        match = 'app=Safari'
+
+        [theme]
+        name = "terminal"
+        """ + "\n"
+        let doc = try Toml.Annotated(parsing: src)
+        let out = doc.settingValue(.string("tag~=web"),
+                                   atTable: ["desktop", "2"], forKey: "match").render()
+        #expect(out == src.replacingOccurrences(
+            of: "match = 'app=Safari'", with: "match = \"tag~=web\""))
+        #expect(try Toml.Annotated(parsing: out).render() == out)
+    }
+
     // MARK: - On a real config (wand's 4 cursor rules)
 
     @Test func reorderRealWandCursorRules() throws {
