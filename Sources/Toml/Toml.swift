@@ -7,14 +7,15 @@
 // bottom. It stays zero-dep (Apple frameworks only, no SwiftPM TOML lib).
 //
 // The family diverged on SHAPE and SEMANTICS, so this projection ships
-// BOTH skins over one shared scalar/line core:
+// BOTH skins over one shared scalar core:
 //
 //   • `parse(_:)  throws -> [String: Value]`   — NESTED, STRICT (chord)
 //   • `parseFlat(_:) -> Document`              — FLAT, LENIENT (the 3)
 //   • `parseWithSpans(_:) throws -> SpannedTree` — the SAME nested strict
-//     tree, re-derived from the lossless DOM with per-entry/per-header
+//     tree, derived from the lossless DOM with per-entry/per-header
 //     line+column spans (ParseWithSpans.swift; chord's column-precise
-//     warnings). CI gates its equivalence with `parse`.
+//     warnings). Since v3 this IS the strict engine: `parse` returns its
+//     `.tree` (the original line-based strict scanner is retired).
 //
 //   • chord wants a NESTED tree + STRICT throwing parse (dotted keys
 //     collapse, nested `[[a.b]]` arrays-of-tables, each AoT row a `Row`
@@ -23,10 +24,13 @@
 //     header text (`tables["cast.overlay.trail"]`, `arrays["rules"]`)
 //     + LENIENT parsing (a typo loses one line, the daemon survives).
 //
-// Both share the same `Value` model, scalar grammar, comment stripping,
-// quote handling, and multi-line-array accumulation. They differ only
-// in WHERE a parsed value lands (a nested tree vs. flat literal-keyed
-// maps) and in error policy (throw vs. skip-the-line).
+// Both share the same `Value` model and scalar grammar (the strict fold
+// replays every value through `parseFlat`'s decoder — decodeWholeScalar).
+// They differ in WHERE a parsed value lands (a nested tree vs. flat
+// literal-keyed maps), in error policy (throw vs. skip-the-line), and in
+// LINE structure: `parse` rides the lossless tiler (conformance-grade
+// headers/keys, correct CRLF), `parseFlat` stays a line scanner BY DESIGN
+// (its leniency can't ride the strict tiler).
 //
 // Surfaced by this projection:
 //   • `key = value` at table/section scope
@@ -46,14 +50,12 @@
 //     `0x…`, float (Double), bool. Int is tried before float so a bare
 //     `2` stays `.int`.
 //   • `#` comments to end of line, quote- AND escape-aware (an
-//     escaped `\"` inside a basic string doesn't end it). CRLF is NOT
-//     actually split by these line parsers (a Swift `Character` folds
-//     "\r\n", so `split(separator: "\n")` sees a one-line document):
-//     a multi-entry CRLF document throws unless every interior CRLF
-//     hides inside quoted string content (then it parses, CRLF kept as
-//     garbage content — pinned in crlfInsideStringPinned). Only the
-//     trailing-\r\n-of-a-single-line case genuinely works, via the trim.
-//     `parseWithSpans` handles CRLF correctly (scalar-based lexLines).
+//     escaped `\"` inside a basic string doesn't end it). CRLF: `parse`
+//     handles it correctly (the tiler's scalar-based lexLines); the
+//     `parseFlat` line scanner does NOT actually split it (a Swift
+//     `Character` folds "\r\n", so `split(separator: "\n")` sees a
+//     one-line document) — a multi-entry CRLF document loses lines
+//     unless every interior CRLF hides inside quoted string content.
 //
 // This projection deliberately does NOT surface multi-line strings
 // (`"""…"""`), date/time literals, integer underscores/octal/binary,
@@ -124,62 +126,16 @@ public enum Toml {
     /// Dotted keys + headers fold to nested `.table`; `[[a.b]]` appends
     /// to `a[last].b`; every AoT row is a `Row` carrying the `SourceSpan`
     /// of its `[[header]]` (see Span.swift).
+    ///
+    /// Since v3 this DELEGATES to `parseWithSpans` — one strict engine, the
+    /// lossless-DOM fold (the original line-based scanner is retired). The
+    /// tree is unchanged; the strictness is the tiler's: CRLF documents
+    /// parse correctly, and garbage the old scanner tolerated (a control
+    /// char in a comment, a `[]` header, an invalid bare key, triple-quoted
+    /// spellings) throws. Callers that also want source locations call
+    /// `parseWithSpans` directly.
     public static func parse(_ source: String) throws -> [String: Value] {
-        let lines = stripBOM(source).split(separator: "\n",
-                                 omittingEmptySubsequences: false).map(String.init)
-        var root: [String: Value] = [:]
-        var currentPath: [String] = []
-        var inArrayOfTables = false
-        var i = 0
-
-        while i < lines.count {
-            let lineNo = i + 1
-            let rawLine = lines[i]
-            let line = stripComment(rawLine)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            i += 1
-            if line.isEmpty { continue }
-
-            if line.hasPrefix("[[") {
-                guard line.hasSuffix("]]") else {
-                    throw ParseError(line: lineNo, message: "unterminated [[...]] header")
-                }
-                let path = line.dropFirst(2).dropLast(2)
-                    .trimmingCharacters(in: .whitespaces)
-                currentPath = splitDottedPath(path)
-                let span = SourceSpan(line: lineNo, column: leadingColumn(rawLine))
-                appendArrayOfTablesRow(&root, path: currentPath, span: span)
-                inArrayOfTables = true
-                continue
-            }
-            if line.hasPrefix("[") {
-                guard line.hasSuffix("]") else {
-                    throw ParseError(line: lineNo, message: "unterminated [...] header")
-                }
-                let path = line.dropFirst().dropLast()
-                    .trimmingCharacters(in: .whitespaces)
-                currentPath = splitDottedPath(path)
-                inArrayOfTables = false
-                continue
-            }
-
-            guard let eq = firstTopLevelEquals(line) else {
-                throw ParseError(line: lineNo, message: "expected '=' in '\(line)'")
-            }
-            let key = String(line[..<eq]).trimmingCharacters(in: .whitespaces)
-            var rhs = String(line[line.index(after: eq)...])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            rhs = completeMultilineArray(rhs, lines, &i)
-            let value = try parseValue(rhs, lineNo: lineNo)
-            let dotted = splitDottedPath(key)
-            if inArrayOfTables {
-                writeIntoArrayOfTablesRow(&root, path: currentPath,
-                                          key: dotted, value: value)
-            } else {
-                write(&root, path: currentPath + dotted, value: value)
-            }
-        }
-        return root
+        try parseWithSpans(source).tree
     }
 
     // MARK: - Flat, lenient (facet / perch / wand)
@@ -523,9 +479,10 @@ public enum Toml {
     // `guard !path.isEmpty` (the recursion always passes a non-empty
     // `dropFirst` slice), so the pairs collapse to one function each.
     //
-    // Internal (not private): the DOM-derived `parseWithSpans` folds through
-    // these SAME helpers, which is what makes its tree equivalent to `parse`'s
-    // by construction — do not fork them.
+    // Internal (not private): these are the WRITERS of the strict nested
+    // tree — `parseWithSpans`'s DOM fold (and therefore `parse`) builds
+    // through them. They carried `parse`'s tree semantics verbatim across
+    // the line-scanner retirement — do not fork them.
 
     static func write(_ table: inout [String: Value],
                       path: [String], value: Value) {
