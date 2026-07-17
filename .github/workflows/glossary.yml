@@ -1,0 +1,34 @@
+name: Deploy glossary site
+
+# Build a per-repo glossary SPA from docs/glossary.md and publish it to
+# https://akira-toriyama.github.io/swift-toml-edit/. The builder + viewer live
+# in akira-toriyama/glossary-site; this caller is intentionally thin.
+#
+# - push to main       → build + deploy
+# - pull_request       → build only (artifact; no deploy)
+# - workflow_dispatch   → build + deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - docs/glossary.md
+      - .github/workflows/glossary.yml
+  pull_request:
+    paths:
+      - docs/glossary.md
+      - .github/workflows/glossary.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-${{ github.event.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    uses: akira-toriyama/glossary-site/.github/workflows/deploy.yml@main
