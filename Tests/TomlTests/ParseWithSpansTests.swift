@@ -154,9 +154,10 @@ import Foundation
 }
 
 @Test func crlfMultilineArrayParsesAndAttributes() throws {
-    // A CRLF document whose VALUE spans lines: the fold must normalize the
-    // array's interior "\r\n" before the decode (decodeScalar re-joins lines
-    // through parseFlat, whose Character-based split can't see CRLF).
+    // A CRLF document whose VALUE spans lines: the fold normalizes the array's
+    // interior "\r\n" before the decode. That normalization is LOAD-BEARING, not
+    // a leftover — it is the strict path's only CR filter, and parseFlat reading
+    // CRLF correctly does not replace it (see normalizedMultilineArrayValue).
     let src = "xs = [\r\n  1,\r\n  2,\r\n]\r\nafter = true\r\n"
     let r = try Toml.parseWithSpans(src)
     #expect(r.tree["xs"]?.asArray == [.int(1), .int(2)])

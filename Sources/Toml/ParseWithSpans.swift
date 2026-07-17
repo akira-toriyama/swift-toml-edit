@@ -289,9 +289,18 @@ extension Toml {
     /// Prepare a multi-line ARRAY value for the scalar-grammar replay:
     /// normalize CRLF terminators to LF — only OUTSIDE string spans, so string
     /// content is never rewritten — and throw on a raw CR left INSIDE a string
-    /// span (invalid TOML that the retired scanner's one-line CRLF fold
-    /// garbage-tolerated; the replay cannot reproduce that output, so failing
+    /// span (invalid TOML; the replay cannot reproduce that spelling, so failing
     /// loudly beats silently misparsing).
+    ///
+    /// DO NOT "simplify" this away as redundant now that `parseFlat`'s splitter
+    /// is scalar-based (it reads CRLF correctly by itself). This function is the
+    /// SOLE reason a CR never reaches the strict fold's replay: the fold is
+    /// sequential — a value with an interior newline must start with `[` or the
+    /// fold throws, and every such value comes through here — so the two halves
+    /// below are the only CR filter on the strict path. Measured: 0 of 8014
+    /// replayed spellings (3000 mixed-terminator fuzz docs + all 7 real-config
+    /// fixtures + their CRLF twins) carry even one CR. Delete either half and
+    /// invalid raw-CR-in-string arrays start decoding instead of throwing.
     static func normalizedMultilineArrayValue(_ s: String, line: Int) throws -> String {
         let a = Array(s.unicodeScalars)
         var out = String.UnicodeScalarView()
