@@ -1,29 +1,29 @@
 #:schema ./config.schema.json
-# facet — per-mac-desktop sections (the modern [[desktop.N.section]] shape).
-# Fixture for the per-element edit ops: facet's config auto-persist rewrites
-# label / match / layout values in place and names unnamed workspaces.
+# facet — per-mac-desktop sections plus a typed desktop (the modern
+# [[desktop.N.section]] + [desktop.N] shape). Fixture for the per-element edit
+# ops: facet's config auto-persist names unnamed workspaces, rewrites layout in
+# place, and live-retargets an isolate desktop's `match`.
 
 [theme]
 name = "terminal"
 
-# Desktop 1 — a lost+found, an unnamed workspace, and a lens.
+# Desktop 1 — a WORKSPACE desktop: one section per workspace cell. A section is
+# a plain workspace (label / layout); the desktop's `type` lives on the
+# [desktop.N] table, never here.
 [[desktop.1.section]]
-unassigned = true
-label = "Lost & Found"
-
-# unnamed workspace — auto-persist upserts a `label` here
-[[desktop.1.section]]
-type = "workspace"
+label = "Main"
 layout = "bsp"
 
+# unnamed workspace — auto-persist upserts a `label` here. Must stay at
+# ordinal 1: the edit-op tests address it by index.
 [[desktop.1.section]]
-type = "lens"
+layout = "stack"
+
+# Desktop 2 — an always-on ISOLATE desktop: no sections, and `match` / `layout`
+# / `show-non-matching` / `label` sit DIRECTLY on the table.
+[desktop.2]
+type = "isolate"
 label = "Web"
 match = 'app=Safari or app~=Chrome'   # live-edited at runtime
-apply = { tags = ["web"] }
-
-# Desktop 2 — one named workspace.
-[[desktop.2.section]]
-type = "workspace"
-label = "Main"
-layout = "stack"
+layout = "bsp"
+show-non-matching = true

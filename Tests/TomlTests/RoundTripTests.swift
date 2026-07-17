@@ -77,8 +77,13 @@ import Foundation
     }
 
     @Test func numericDottedHeaderAndInlineTable() throws {
+        // A neutral shape on purpose: no family config ships an inline table
+        // any more, so this case (and the fuzz grammar) is the construct's only
+        // guard. It used to be spelled as facet's `[desktop.1]` workspace list,
+        // which facet retired — keeping that spelling would have it read as
+        // live vocabulary.
         try check("""
-        [desktop.1]
+        [panel.1]
         1 = { name = "Dev" }
         2 = { name = "Web" }
         """)
@@ -169,12 +174,14 @@ import Foundation
         try check(#"cmd = 'cd ~/repo && git switch "{line}"'"# + "\n")
     }
 
-    // MARK: - Real config goldens (the family's six shipped config.toml files)
+    // MARK: - Real config goldens (the family's six shipped config.toml files,
+    // plus the hand-written facet sections fixture the edit ops are pinned to)
 
     @Test func roundTripStill() throws { try check(try fixture("still")) }
     @Test func roundTripHalo() throws { try check(try fixture("halo.config")) }
     @Test func roundTripChord() throws { try check(try fixture("chord.config")) }
     @Test func roundTripFacet() throws { try check(try fixture("facet.config")) }
+    @Test func roundTripFacetSections() throws { try check(try fixture("facet.sections")) }
     @Test func roundTripPerch() throws { try check(try fixture("perch.config")) }
     @Test func roundTripWand() throws { try check(try fixture("wand.config")) }
 

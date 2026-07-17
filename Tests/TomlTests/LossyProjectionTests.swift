@@ -407,8 +407,26 @@ func realConfigsReadIdenticallyAsCRLF(_ name: String) throws {
     // [[exclude]] array-of-tables
     #expect((doc.arrays["exclude"]?.count ?? 0) >= 3)
     #expect(doc.arrays["exclude"]?.first?["app"]?.asString == "com.apple.systempreferences")
-    // inline table value under a dotted [desktop.1] section
-    #expect(doc.tables["desktop.1"]?["1"]?.asTable?["name"]?.asString == "Dev")
+    // [[desktop.1.section]] — an AoT keyed by its literal dotted name
+    #expect(doc.arrays["desktop.1.section"]?.count == 2)
+    #expect(doc.arrays["desktop.1.section"]?.first?["label"]?.asString == "Main")
+    #expect(doc.arrays["desktop.1.section"]?.first?["layout"]?.asString == "bsp")
+    // a TYPED desktop: the isolate table carries its keys directly
+    #expect(doc.tables["desktop.2"]?["type"]?.asString == "isolate")
+    #expect(doc.tables["desktop.2"]?["match"]?.asString
+            == "app~=Chrome or app~=Safari or app~=Firefox")
+    #expect(doc.tables["desktop.2"]?["show-non-matching"]?.asBool == true)
+    // [alias] / [tags] / [[rule]] ship COMMENTED OUT. A commented HEADER can
+    // never be mistaken for a real one (it fails the `[` prefix test before
+    // comment-stripping is even consulted), so these two only pin that the
+    // vendored sample still ships them dead — a fixture-drift tripwire.
+    #expect(doc.tables["alias"] == nil)
+    #expect(doc.tables["tags"] == nil)
+    // The leak that CAN happen: a commented block's key lines landing in the
+    // live table above them. `[config]` sits directly above the commented
+    // `[tags]`, so it is where that pollution would surface.
+    #expect(doc.tables["config"]?.count == 2)   // export-path + auto-promote
+    #expect(doc.tables["config"]?.keys.contains { $0.hasPrefix("#") } == false)
 }
 
 @Test func wandRealConfigParsesFlat() throws {

@@ -50,7 +50,7 @@
   since v2.1.0 (t-12az, facet's config auto-persist prereq) — per-element
   VALUE writes (`settingValue` / `upsertingValue` on one AoT element,
   `settingArrayValue` under a std table, values spelled via the public
-  `Toml.encode`), plus — v2.3.0 (t-sgqk, facet's lens-desktop `match`
+  `Toml.encode`), plus — v2.3.0 (t-sgqk, facet's isolate-desktop `match`
   persistence) — the scalar twin `settingValue(_:atTable:forKey:)` for a
   single `[path]` table entry (same engine + no-op guards as the array
   form). From-scratch emit and APPENDING a whole new AoT element stay

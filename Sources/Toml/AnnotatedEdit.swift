@@ -10,7 +10,7 @@
 // the value token inside one entry's `raw` is rewritten (via `Toml.encode`),
 // so comments / indent / spacing stay byte-verbatim. v2.3.0 adds the scalar
 // twin `settingValue(_:atTable:forKey:)` for a single `[path]` table entry
-// (facet's lens-desktop `[desktop.N] match`, t-sgqk) — same engine, same
+// (facet's isolate-desktop `[desktop.N] match`, t-sgqk) — same engine, same
 // guards. Still out of scope: from-scratch emit, and APPENDING a whole new
 // `[[path]]` element (facet skips + logs that case).
 //
@@ -176,7 +176,7 @@ public extension Toml.Annotated {
 
     /// Set-or-insert `key = value` (one SCALAR entry) under the FIRST `[path]`
     /// std table — the scalar twin of `settingArrayValue`, and the write facet's
-    /// config auto-persistence needs for a lens desktop's live-retargeted
+    /// config auto-persistence needs for an isolate desktop's live-retargeted
     /// `[desktop.N] match = "…"` (t-sgqk; `[desktop.N]` is a SINGLE table, so
     /// the AoT-element ops can't reach it). Identical semantics + no-op guards;
     /// the value is spelled by `Toml.encode`, so a string always becomes a
