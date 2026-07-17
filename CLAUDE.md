@@ -28,15 +28,18 @@
   not collide with the lossy `Toml.Value` / `Toml.Document` names.
 - **Lossy projection**: re-exposes the read API under the SAME names sill's
   `Toml` had — `parse` (nested, strict), `parseFlat` (flat, lenient), `Value`,
-  `Document`, the accessors. The gated unification is DONE for the strict
-  path: `parseWithSpans` (2.3.0, t-0030/chord#159) re-derives the SAME nested
+  `Document`, the accessors. The gated unification is COMPLETE for the
+  strict path: `parseWithSpans` (2.3.0, t-0030/chord#159) derives the nested
   tree from the lossless DOM and adds per-entry/per-header line+column spans
   (`SpannedTree`/`PathSegment`/`EntrySpans`) for chord's column-precise
-  `(config.toml:N:C)` warnings. Equivalence with the line-based `parse` is
-  CI-gated (ParseWithSpansTests: fixtures + hand corpus + shared fuzz
-  grammar); `parse` stays line-based until chord migrates (then it can
-  delegate), and `parseFlat` stays a line scanner BY DESIGN — its leniency
-  can't ride the strict tiler.
+  `(config.toml:N:C)` warnings, and since v3.0.0 `parse` DELEGATES to it —
+  the line-based strict scanner is retired (chord, its only consumer, moved
+  to `parseWithSpans` first: chord#178–#180). The old equivalence deltas are
+  now `parse`'s contract, pinned in ParseWithSpansTests: CRLF documents
+  parse correctly; triple-quoted spellings and tiler-rejected garbage (a
+  control char in a comment, a `[]` header, an invalid bare key) throw.
+  `parseFlat` stays a line scanner BY DESIGN — its leniency can't ride the
+  strict tiler.
   Source attribution: `parse`'s `Value.arrayOfTables` holds `[Row]` (each row's
   `fields` + the `[[header]]` `SourceSpan` — see `Span.swift`), NOT a bare
   `[[String: Value]]`. This replaced the old synthetic `__line__`/`lineKey`

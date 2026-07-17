@@ -1,11 +1,13 @@
-// parseWithSpans — the lossy nested `parse`, RE-DERIVED from the lossless
+// parseWithSpans — the lossy nested strict parse, derived from the lossless
 // `Annotated` DOM, with per-entry / per-header source locations (chord#159).
+// Since v3 this is the ONE strict engine: `Toml.parse` returns this fold's
+// `.tree` (the original line-based scanner is retired).
 //
 // This is the post-M2 unification the module gated on the lossless parser
-// passing full toml-test (it does — CI runs the official suite): instead of a
-// second line-based scan, tile the document with `Annotated(parsing:)` and
-// FOLD the DOM into the same nested `[String: Value]` tree `parse` builds,
-// using the SAME proven write helpers (`write` / `appendArrayOfTablesRow` /
+// passing full toml-test (it does — CI runs the official suite): tile the
+// document with `Annotated(parsing:)` and FOLD the DOM into the nested
+// `[String: Value]` tree the strict `parse` always produced, using the SAME
+// proven write helpers (`write` / `appendArrayOfTablesRow` /
 // `writeIntoArrayOfTablesRow`). Because rendering an unedited DOM is
 // byte-identical to the source, each node's line/column is derived exactly by
 // accumulating the newlines of the raw spans walked so far — no coordinates
@@ -22,23 +24,21 @@
 //   • duplicate keys last-write-win; redefinition is NOT policed (that is
 //     `typedTree()`'s job, not the lossy projection's).
 //
-// Equivalence with the line-based `parse` — same tree (Row.spans included) or
-// both throw — is CI-gated over the family's real configs, a hand corpus and
-// the shared fuzz grammar (ParseWithSpansTests). The deliberate deltas, each
-// pinned by a test, are all in the correct-TOML direction:
-//   • CRLF terminators: documents parse correctly here (multi-line arrays
-//     included), while `parse`'s Character-based `split(separator: "\n")`
-//     folds "\r\n" into one Character, sees a one-line document and (for any
-//     multi-entry document) throws. The reverse arm: a raw CRLF *inside* a
-//     single-line string survives legacy's one-line fold as garbage content,
-//     but the tiler splits it and this parse throws;
+// The fold's strict-parse contract at the points where it deliberately
+// diverged from the retired line scanner (each pinned in ParseWithSpansTests;
+// all in the correct-TOML direction):
+//   • CRLF terminators: documents parse correctly (multi-line arrays
+//     included — the retired scanner's Character-based split folded "\r\n"
+//     and threw on any multi-entry CRLF document). The reverse arm: a raw
+//     CRLF *inside* a single-line string is split by the tiler into an
+//     unterminated string and throws;
 //   • triple-quoted spellings: any `"""`/`'''` string SPELLING in a value
 //     throws `unrecognised value` — the M1 grammar has no multi-line strings
 //     (the datetime stance). This is also the stability boundary: past a
-//     triple quote the legacy naive quote model and the lex model disagree
-//     (quote runs ≥ 4, `#`-after-parity), where legacy garbage-tolerates,
-//     wrongly throws, or would make this fold silently drop over-consumed
-//     lines — rejecting is the only contract that cannot silently diverge;
+//     triple quote naive quote models disagree (quote runs ≥ 4,
+//     `#`-after-parity), and a lenient read would make this fold silently
+//     drop over-consumed lines — rejecting is the only contract that cannot
+//     silently misparse;
 //   • strictness inherited from the tiler rejects documents the old scanner
 //     silently tolerated: a control char in a comment (lexValidateComment), a
 //     degenerate header like `[]`, an invalid bare key (lexDottedPathStrict).
@@ -89,11 +89,12 @@ public extension Toml {
         }
     }
 
-    /// `parseWithSpans`'s result: the exact `parse` tree, plus the location
-    /// index the tree itself cannot carry (its Equatable identity must stay
-    /// comparable with `parse`'s output — the unification gate depends on it).
+    /// `parseWithSpans`'s result: the strict nested tree, plus the location
+    /// index the tree itself cannot carry (the tree's Equatable identity is
+    /// plain `[String: Value]` — span data lives beside it, never inside it).
     struct SpannedTree: Sendable, Equatable {
-        /// The nested root — identical to `Toml.parse(source)`.
+        /// The nested root — exactly what `Toml.parse(source)` returns
+        /// (`parse` delegates here since v3).
         public var tree: [String: Value]
         /// Leaf-path → key/value locations, one per surviving assignment.
         public var entrySpans: [[PathSegment]: EntrySpans]
@@ -185,8 +186,8 @@ public extension Toml {
 
             // M1 value grammar. A triple-quoted string SPELLING anywhere in
             // the value is out of grammar (like a datetime) — and past it the
-            // legacy and lex quote models disagree, so garbage-tolerating
-            // would silently diverge from `parse`. Reject up front.
+            // naive scalar-replay and lex quote models disagree, so
+            // garbage-tolerating would silently misparse. Reject up front.
             var valueText = e.valueText
             if containsMultilineStringSpelling(valueText) {
                 throw ParseError(line: line, message: "unrecognised value '\(valueText)'")
@@ -194,15 +195,16 @@ public extension Toml {
             // Only a multi-line ARRAY may span physical lines (a line-broken
             // inline table etc. is out of grammar). The test is "\n" ONLY: a
             // LONE raw CR is not a line terminator — it flows to the decode,
-            // which treats it exactly as the line-based `parse` did.
+            // which tolerates it as the shared scalar grammar always has.
             if valueText.unicodeScalars.contains("\n") {
                 guard valueText.hasPrefix("[") else {
                     throw ParseError(line: line, message: "unrecognised value '\(valueText)'")
                 }
                 valueText = try normalizedMultilineArrayValue(valueText, line: line)
             }
-            // Whole-value replay: any spelling the legacy grammar cannot
-            // consume as ONE value throws here — never a silent partial parse.
+            // Whole-value replay: any spelling the shared scalar grammar
+            // cannot consume as ONE value throws here — never a silent
+            // partial parse.
             guard let value = decodeWholeScalar(valueText) else {
                 throw ParseError(line: line, message: "unrecognised value '\(valueText)'")
             }
@@ -266,8 +268,8 @@ extension Toml {
 
     /// Whether a value spelling contains a triple-quoted (`"""` / `'''`)
     /// string — the multi-line string grammar the M1 projection excludes.
-    /// Everything past such an opener is where the legacy naive quote model
-    /// and `lexScanQuoted` can disagree, so the fold rejects it up front.
+    /// Everything past such an opener is where a naive quote model and
+    /// `lexScanQuoted` can disagree, so the fold rejects it up front.
     static func containsMultilineStringSpelling(_ s: String) -> Bool {
         let a = Array(s.unicodeScalars)
         var i = 0
@@ -284,12 +286,12 @@ extension Toml {
         return false
     }
 
-    /// Prepare a multi-line ARRAY value for the legacy-grammar replay:
+    /// Prepare a multi-line ARRAY value for the scalar-grammar replay:
     /// normalize CRLF terminators to LF — only OUTSIDE string spans, so string
     /// content is never rewritten — and throw on a raw CR left INSIDE a string
-    /// span (invalid TOML that legacy's one-line CRLF fold garbage-tolerated;
-    /// the replay cannot reproduce that output, so failing loudly beats
-    /// silently diverging).
+    /// span (invalid TOML that the retired scanner's one-line CRLF fold
+    /// garbage-tolerated; the replay cannot reproduce that output, so failing
+    /// loudly beats silently misparsing).
     static func normalizedMultilineArrayValue(_ s: String, line: Int) throws -> String {
         let a = Array(s.unicodeScalars)
         var out = String.UnicodeScalarView()
@@ -317,8 +319,8 @@ extension Toml {
         return String(out)
     }
 
-    /// Decode a value spelling through the legacy grammar, requiring the
-    /// replay to consume it WHOLE: `parseFlat` parses `__v__ = <text>`, and
+    /// Decode a value spelling through the shared scalar grammar, requiring
+    /// the replay to consume it WHOLE: `parseFlat` parses `__v__ = <text>`, and
     /// anything in the synthetic document beyond that single binding means the
     /// naive model closed the value early (an out-of-grammar spelling) — nil,
     /// so the fold throws instead of silently dropping the over-consumed tail.

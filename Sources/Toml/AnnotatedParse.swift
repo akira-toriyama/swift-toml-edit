@@ -176,13 +176,13 @@ public extension Toml.Annotated {
 // DOM. The string-aware scanners these build on (`lexScanQuoted`,
 // `lexValueOpen`, `lexStripComment`, …) live in Lexer.swift.
 //
-// Unification status (the post-M2 plan, now that toml-test passes in full):
-// `parseWithSpans` (ParseWithSpans.swift) IS the strict lossy parse re-derived
-// over this DOM — same tree as `parse`, CI-gated equivalent, plus per-entry
-// spans. The line-based `parse` stays alongside it until chord (its only
-// consumer) migrates; then `parse` can simply delegate. `parseFlat` stays a
-// line scanner BY DESIGN: its "skip the bad line" leniency cannot ride a
-// strict tiler without an error-recovery story nobody needs yet.
+// Unification status (the post-M2 plan): COMPLETE. `parseWithSpans`
+// (ParseWithSpans.swift) IS the strict lossy parse derived over this DOM —
+// nested tree plus per-entry spans — and since v3 `parse` simply delegates
+// to it (chord, its only consumer, migrated first; the line-based strict
+// scanner is retired). `parseFlat` stays a line scanner BY DESIGN: its
+// "skip the bad line" leniency cannot ride a strict tiler without an
+// error-recovery story nobody needs yet.
 
 extension Toml {
 

@@ -1,8 +1,8 @@
 import Foundation
 
 // Shared deterministic TOML document generator — extracted from
-// FuzzRoundTripTests so the lossy-derivation equivalence suite
-// (ParseWithSpansTests) can fuzz the SAME grammar. It builds many
+// FuzzRoundTripTests so the lossy-derivation suite (ParseWithSpansTests)
+// can fuzz the SAME grammar. It builds many
 // diverse-but-VALID TOML documents, deliberately varying the dimensions where
 // tiler/trivia bugs live (leading/trailing trivia, banner vs separator
 // comments, blank-line runs, indentation, inline comments, LF vs CRLF per
