@@ -30,6 +30,10 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Build/test only — zero-dep SwiftPM never fetches a remote package
+          # and nothing pushes. Drop the persisted checkout token. t-yaxa
+          persist-credentials: false
       - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
         with:
           xcode-version: latest-stable
@@ -55,6 +59,10 @@ jobs:
     container: swift:6.0
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Build/test only — zero-dep SwiftPM never fetches a remote package
+          # and nothing pushes. Drop the persisted checkout token. t-yaxa
+          persist-credentials: false
       - name: Show toolchain
         run: swift --version
       - name: Build (release)
@@ -72,6 +80,11 @@ jobs:
     container: swift:6.0
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Conformance only: `go install` fetches a public module via GOPROXY
+          # and toml-test runs local binaries — no authenticated git, no push.
+          # Drop the persisted checkout token. t-yaxa
+          persist-credentials: false
       - name: Install Go
         uses: actions/setup-go@v6
         with:
