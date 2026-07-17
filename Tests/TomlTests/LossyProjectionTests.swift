@@ -290,6 +290,54 @@ import Foundation
     #expect(doc.tables["a"]?["trail"]?.asStringArray == ["x", "y"])
 }
 
+// MARK: - CRLF line endings (parseFlat)
+
+// `parseFlat` splits physical lines with the scalar-based `lexLines`, NOT
+// `split(separator: "\n")` — a Swift `Character` folds "\r\n" into ONE grapheme,
+// so the Character-based split saw a whole CRLF document as a single line and
+// dropped essentially all of it. The contract these pin: a CRLF document reads
+// exactly like its LF twin.
+
+@Test func flatParsesCRLFDocument() throws {
+    let doc = Toml.parseFlat("a = 1\r\nb = \"x\"\r\n[t]\r\nc = 3\r\n[[r]]\r\nname = \"n\"\r\n")
+    #expect(doc.tables[""]?["a"]?.asInt == 1)
+    #expect(doc.tables[""]?["b"]?.asString == "x")
+    #expect(doc.tables["t"]?["c"]?.asInt == 3)
+    let rows = try #require(doc.arrays["r"])
+    #expect(rows.count == 1)
+    #expect(rows[0]["name"]?.asString == "n")
+}
+
+/// The CRLF twin of an LF source. Guarded on purpose: the naive
+/// `replacingOccurrences(of: "\n", with: "\r\n")` only builds a faithful twin
+/// when the source holds no CR at all — an existing "\r\n" would become
+/// "\r\r\n" and a lone CR would ride along — and then the twin asserts
+/// something other than "the same document, CRLF-terminated". Requiring
+/// CR-freedom keeps a future CR-bearing input from silently weakening a caller.
+private func crlfTwin(of lf: String) throws -> String {
+    try #require(!lf.contains("\r"),
+                 "source already holds a CR — the naive twin-builder would corrupt it")
+    return lf.replacingOccurrences(of: "\n", with: "\r\n")
+}
+
+@Test func flatCRLFDocumentEqualsLFTwin() throws {
+    let lf = "a = 1\nb = \"x\"\n\n# banner\n[t]\nc = 3\nxs = [\n  \"p\",\n  \"q\",\n]\n\n[[r]]\nname = \"n\"\n[[r]]\nname = \"m\"\n"
+    #expect(Toml.parseFlat(try crlfTwin(of: lf)) == Toml.parseFlat(lf))
+}
+
+@Test func flatCRLFMultilineArray() throws {
+    let doc = Toml.parseFlat("xs = [\r\n  1,\r\n  2,\r\n]\r\nafter = true\r\n")
+    #expect(doc.tables[""]?["xs"]?.asArray == [.int(1), .int(2)])
+    #expect(doc.tables[""]?["after"]?.asBool == true)
+}
+
+/// The DOM's lenient decoder rides `parseFlat` (`decodeScalar`), so a CRLF
+/// multi-line array's `Entry.value` decoded to nil for the same root cause.
+@Test func annotatedEntryValueDecodesCRLFMultilineArray() throws {
+    let dom = try Toml.Annotated(parsing: "xs = [\r\n  1,\r\n  2,\r\n]\r\n")
+    #expect(dom.root.entry(forKey: "xs")?.value == .array([.int(1), .int(2)]))
+}
+
 // MARK: - Multi-line arrays (the Phase 1.6 superset delta + perch bug fix)
 
 @Test func multilineArrayFlat() {
@@ -326,6 +374,22 @@ private func fixture(_ name: String) throws -> String {
         "missing fixture \(name).toml"
     )
     return try String(contentsOf: url, encoding: .utf8)
+}
+
+@Test(arguments: ["chord.config", "facet.config", "facet.sections",
+                  "halo.config", "perch.config", "wand.config", "still"])
+func realConfigsReadIdenticallyAsCRLF(_ name: String) throws {
+    // The CRLF contract over the REAL corpus, so it is structural rather than
+    // resting on hand-written cases. Under the Character-based split every one
+    // of these read back as an empty `Document` once CRLF-terminated; the bug
+    // never bit a consumer only because the family edits config on macOS, where
+    // editors write LF. All seven fixtures are LF — `crlfTwin` enforces that.
+    let lf = try fixture(name)
+    let doc = Toml.parseFlat(lf)
+    let bindings = doc.tables.values.reduce(0) { $0 + $1.count }
+        + doc.arrays.values.reduce(0) { $0 + $1.reduce(0) { $0 + $1.count } }
+    #expect(bindings > 0, "fixture parsed to nothing — the CRLF comparison would be vacuous")
+    #expect(Toml.parseFlat(try crlfTwin(of: lf)) == doc)
 }
 
 @Test func chordRealConfigParsesStrict() throws {

@@ -29,8 +29,9 @@
 // They differ in WHERE a parsed value lands (a nested tree vs. flat
 // literal-keyed maps), in error policy (throw vs. skip-the-line), and in
 // LINE structure: `parse` rides the lossless tiler (conformance-grade
-// headers/keys, correct CRLF), `parseFlat` stays a line scanner BY DESIGN
-// (its leniency can't ride the strict tiler).
+// headers/keys), `parseFlat` stays a line scanner BY DESIGN (its leniency
+// can't ride the strict tiler) — but both split physical lines with the
+// tiler's scalar-based `lexLines`, so CRLF is correct on either skin.
 //
 // Surfaced by this projection:
 //   • `key = value` at table/section scope
@@ -50,12 +51,9 @@
 //     `0x…`, float (Double), bool. Int is tried before float so a bare
 //     `2` stays `.int`.
 //   • `#` comments to end of line, quote- AND escape-aware (an
-//     escaped `\"` inside a basic string doesn't end it). CRLF: `parse`
-//     handles it correctly (the tiler's scalar-based lexLines); the
-//     `parseFlat` line scanner does NOT actually split it (a Swift
-//     `Character` folds "\r\n", so `split(separator: "\n")` sees a
-//     one-line document) — a multi-entry CRLF document loses lines
-//     unless every interior CRLF hides inside quoted string content.
+//     escaped `\"` inside a basic string doesn't end it).
+//   • CRLF, on BOTH skins: they share the tiler's scalar-based `lexLines`
+//     splitter, so a CRLF document reads exactly like its LF twin.
 //
 // This projection deliberately does NOT surface multi-line strings
 // (`"""…"""`), date/time literals, integer underscores/octal/binary,
@@ -146,8 +144,13 @@ public enum Toml {
     /// `[[String: Value]]` (no `Row`/span — the flat consumers don't
     /// attribute warnings to source lines).
     public static func parseFlat(_ source: String) -> Document {
-        let lines = stripBOM(source).split(separator: "\n",
-                                 omittingEmptySubsequences: false).map(String.init)
+        // Physical lines via the scalar-based `lexLines`, NOT
+        // `split(separator: "\n")`: a Swift `Character` folds "\r\n" into one
+        // grapheme, so the Character-based split never fired on a CRLF document
+        // and the whole file arrived here as a single line (every entry then
+        // failed to decode and was leniently dropped). `lexLines` strips the
+        // terminator, so a CRLF document reads exactly like its LF twin.
+        let lines = lexLines(stripBOM(source)).map(\.text)
         var doc = Document()
         doc.tables[""] = [:]          // top-level scope always present
         var section = ""              // literal header text; "" = top-level
