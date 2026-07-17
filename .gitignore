@@ -13,3 +13,8 @@ Package.resolved
 
 ## macOS
 .DS_Store
+
+## Claude Code (harness-local state; a worktree here is an embedded git repo
+## that `git add -A` would commit as a stray gitlink — ignore only worktrees so
+## the rest of .claude/ stays committable)
+.claude/worktrees/
