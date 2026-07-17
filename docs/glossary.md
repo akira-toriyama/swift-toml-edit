@@ -241,3 +241,23 @@ atelier リファクタにおける STE の位置づけ。sill の lossy `Toml` 
 ### atelier family
 STE を含む wand 家系のプロジェクト群。STE はその共有 TOML 基盤。
 - 関連: [[Sill-1]]
+
+## 退役語
+
+退役した STE 固有の語。見出しは正規名のまま残し、`deprecated::` で退役バージョンを示す。
+
+### __line__
+deprecated:: 2.0.0
+退役した合成 dict キー（旧称 `lineKey`）。AoT 行に警告帰属の行番号を埋めていたが、user
+キーを shadow し得る・行を iterate するたび skip 必須の leaky abstraction だった。
+2.0.0 で [[Row]] ＋ [[SourceSpan]]（型付き位置）に置換。
+- コード: Span.swift
+- 関連: [[Row]] [[SourceSpan]]
+
+### line-based strict scanner
+deprecated:: 3.0.0
+退役した旧 strict parse の行ベース scanner。v3.0.0 で `parse` が [[parseWithSpans]] に
+委譲し（lossless DOM からの導出に一本化）撤去された。CRLF 正しさや triple-quote 拒否など
+tiler の strictness をそのまま契約として引き継いだ。
+- コード: ParseWithSpans.swift
+- 関連: [[parseWithSpans]] [[parse]]
