@@ -208,18 +208,42 @@ import Foundation
         #expect(try Toml.Annotated(parsing: out).render() == out)
     }
 
-    @Test func setLensMatchOnFacetSectionsFixture() throws {
-        // The real facet shape: rewrite a lens `match` in place; every other
-        // byte of the file is untouched (quoting style of the VALUE is the
-        // one thing that changes — encode always emits a basic string).
+    @Test func setIsolateMatchOnFacetSectionsFixture() throws {
+        // The real facet shape: an isolate desktop's `match` lives DIRECTLY on
+        // the [desktop.N] table (a section is a plain workspace and never
+        // carries one). Rewrite it in place; every other byte of the file is
+        // untouched — quoting style of the VALUE is the one thing that changes
+        // (encode always emits a basic string).
         let src = try fixture("facet.sections")
         let doc = try Toml.Annotated(parsing: src)
         let out = doc.settingValue(.string("app=Safari"),
-                                   atArrayOfTablesElement: ["desktop", "1", "section"],
-                                   ordinal: 2, forKey: "match").render()
+                                   atTable: ["desktop", "2"], forKey: "match").render()
+        let anchor = "match = 'app=Safari or app~=Chrome'   # live-edited at runtime"
+        #expect(src.components(separatedBy: anchor).count - 1 == 1,
+                "anchor must hit the fixture exactly once, or the assertion is vacuous")
         let expected = src.replacingOccurrences(
-            of: "match = 'app=Safari or app~=Chrome'   # live-edited at runtime",
-            with: "match = \"app=Safari\"   # live-edited at runtime")
+            of: anchor, with: "match = \"app=Safari\"   # live-edited at runtime")
+        #expect(out == expected)
+        #expect(try Toml.Annotated(parsing: out).render() == out)
+    }
+
+    @Test func setLayoutOnNamedWorkspaceFixture() throws {
+        // The AoT twin on the same real file: facet rewrites a section's
+        // `layout` in place (ConfigSnapshot's auto-persist). Only that value
+        // token moves — the sibling `label`, the [desktop.2] table's own
+        // `layout = "bsp"`, and every comment stay verbatim.
+        let src = try fixture("facet.sections")
+        let doc = try Toml.Annotated(parsing: src)
+        let out = doc.settingValue(.string("stack"),
+                                   atArrayOfTablesElement: ["desktop", "1", "section"],
+                                   ordinal: 0, forKey: "layout").render()
+        // Anchored on the label+layout run: bare `layout = "bsp"` also matches
+        // the isolate table, and replacingOccurrences rewrites EVERY hit.
+        let anchor = "label = \"Main\"\nlayout = \"bsp\"\n"
+        #expect(src.components(separatedBy: anchor).count - 1 == 1,
+                "anchor must hit the fixture exactly once, or the assertion is vacuous")
+        let expected = src.replacingOccurrences(
+            of: anchor, with: "label = \"Main\"\nlayout = \"stack\"\n")
         #expect(out == expected)
         #expect(try Toml.Annotated(parsing: out).render() == out)
     }
@@ -305,15 +329,17 @@ import Foundation
 
     @Test func upsertLabelIntoUnnamedWorkspaceFixture() throws {
         // facet's use-case: name an unnamed workspace section from the GUI —
-        // `label` is upserted into the element that has none.
+        // `label` is upserted into the element that has none (the fixture
+        // pins that cell at ordinal 1).
         let src = try fixture("facet.sections")
         let doc = try Toml.Annotated(parsing: src)
         let out = doc.upsertingValue(.string("Dev"),
                                      inArrayOfTablesElement: ["desktop", "1", "section"],
                                      ordinal: 1, forKey: "label").render()
-        let expected = src.replacingOccurrences(
-            of: "type = \"workspace\"\nlayout = \"bsp\"\n",
-            with: "type = \"workspace\"\nlayout = \"bsp\"\nlabel = \"Dev\"\n")
+        let anchor = "layout = \"stack\"\n"
+        #expect(src.components(separatedBy: anchor).count - 1 == 1,
+                "anchor must hit the fixture exactly once, or the assertion is vacuous")
+        let expected = src.replacingOccurrences(of: anchor, with: anchor + "label = \"Dev\"\n")
         #expect(out == expected)
         #expect(try Toml.Annotated(parsing: out).render() == out)
     }
@@ -441,21 +467,21 @@ import Foundation
         // Only the value token moves; the same-line comment, indent and `=`
         // spacing stay verbatim. A literal-string old value becomes a basic
         // string (the documented `Toml.encode` spelling).
-        let src = "[desktop.2]\ntype = \"lens\"\nmatch = 'app=Safari' # keep\n"
+        let src = "[desktop.2]\ntype = \"isolate\"\nmatch = 'app=Safari' # keep\n"
         let doc = try Toml.Annotated(parsing: src)
         let out = doc.settingValue(.string("app~=Code"),
                                    atTable: ["desktop", "2"], forKey: "match").render()
-        #expect(out == "[desktop.2]\ntype = \"lens\"\nmatch = \"app~=Code\" # keep\n")
+        #expect(out == "[desktop.2]\ntype = \"isolate\"\nmatch = \"app~=Code\" # keep\n")
     }
 
     @Test func setValueAppendsToExistingTable() throws {
-        // The facet t-sgqk shape: a lens-desktop table whose config never
+        // The facet t-sgqk shape: an isolate-desktop table whose config never
         // spelled `match` gets one appended after the last entry.
-        let src = "[desktop.2]\ntype = \"lens\"\n"
+        let src = "[desktop.2]\ntype = \"isolate\"\n"
         let doc = try Toml.Annotated(parsing: src)
         let out = doc.settingValue(.string("app~=Chrome"),
                                    atTable: ["desktop", "2"], forKey: "match").render()
-        #expect(out == "[desktop.2]\ntype = \"lens\"\nmatch = \"app~=Chrome\"\n")
+        #expect(out == "[desktop.2]\ntype = \"isolate\"\nmatch = \"app~=Chrome\"\n")
     }
 
     @Test func setValueCreatesTableAtEnd() throws {
@@ -482,7 +508,7 @@ import Foundation
         #expect(doc.settingValue(.string("v"), atTable: ["desktop", "2"],
                                  forKey: "match").render() == src)
         // A sub-block `[desktop.2.match]` claims the key the same way.
-        let src2 = "[desktop.2]\ntype = \"lens\"\n\n[desktop.2.match]\nx = 1\n"
+        let src2 = "[desktop.2]\ntype = \"isolate\"\n\n[desktop.2.match]\nx = 1\n"
         let doc2 = try Toml.Annotated(parsing: src2)
         #expect(doc2.settingValue(.string("v"), atTable: ["desktop", "2"],
                                   forKey: "match").render() == src2)
@@ -498,7 +524,7 @@ import Foundation
         label = "Main"   # first
 
         [desktop.2]
-        type = "lens"
+        type = "isolate"
         match = 'app=Safari'
 
         [theme]

@@ -3,9 +3,9 @@
 # https://github.com/akira-toriyama/facet
 #
 # The `#:schema` line above gives editors (taplo / Even Better TOML) key
-# + value completion and inline validation. facet writes this schema next
-# to your config on launch, and it's generated from facet's own config
-# parser (`facet --emit-schema`) — so it always matches the binary.
+# + value completion and inline validation. It points at the generated
+# `config.schema.json` sidecar, which is derived from facet's own config
+# parser (`facet config --emit-schema`) — so it always matches the binary.
 #
 # This file is the **single source of truth** for facet's settings.
 # Drop it (or your edited copy) at ~/.config/facet/config.toml:
@@ -13,12 +13,69 @@
 #   curl --create-dirs -o ~/.config/facet/config.toml \
 #     https://raw.githubusercontent.com/akira-toriyama/facet/main/config.toml
 #
-# facet only ever READS this file; runtime CLI overrides (e.g.
-# `facet --theme=dracula`) apply for the current session only. To
+# facet never writes config.toml — it only ever READS it. (It does
+# write/refresh the generated `config.schema.json` sidecar next to it
+# on launch, purely so editor completion stays in sync with the binary;
+# your settings file is left untouched.) Runtime CLI overrides (e.g.
+# `facet --theme dracula`) apply for the current session only. To
 # make a change stick, edit the value here and restart facet.
+#
+# ONE exception — opt-in config auto-persistence (see [config] below):
+# set `export-path` and facet auto-EXPORTS a live snapshot of your
+# effective config (rename / isolate match / layout / tag edits) to that
+# SEPARATE file, leaving config.toml untouched. Add `auto-promote = true`
+# and the NEXT launch promotes a snapshot that is newer than config.toml
+# onto it — the single sanctioned write (a hand-edit between sessions
+# still wins).
 #
 # Out-of-range / unknown values are silently clamped to safe
 # defaults rather than rejected — a typo can't break the layout.
+#
+# facet always launches in agent-only mode (no panel on screen); a
+# view appears only when summoned — `facet --view tree|grid|rail`, a
+# chord hotkey, etc. A summoned tree always enters keyboard nav.
+
+
+# -----------------------------------------------------------------
+# Config auto-persistence (opt-in) — [config]
+# -----------------------------------------------------------------
+# Your session edits (renaming a section / workspace, live-tuning a
+# isolate `match`, changing a workspace layout, creating tags) are
+# normally session-only — they vanish on restart. Turn this on and
+# facet keeps them, WITHOUT ever touching config.toml behind your back.
+#
+# How it works (two independent steps):
+#   1. export-path — set it and facet AUTO-EXPORTS: on every session
+#      edit it writes a live snapshot of the full effective config to
+#      THIS file (surgical — comments + formatting preserved; config.toml
+#      itself is left untouched). The snapshot is the "growing" copy.
+#      MUST be a different file from config.toml. `~` and relative
+#      (to this file's dir) paths resolve.
+#   2. auto-promote — opt in and, at the NEXT launch, if the snapshot is
+#      strictly newer than config.toml, facet promotes it: overwrites
+#      config.toml with the snapshot, then loads. This is the ONE
+#      sanctioned write to config.toml. A hand-edit between sessions
+#      always wins (whichever file is newer), so you never lose a manual
+#      change. Off by default — with export-path alone you get the
+#      snapshot but config.toml is never overwritten.
+#
+# There is no UI — it's fully automatic. Watch `FACET_DEBUG` logs for
+# "auto-exported" / "auto-promoted". This template ships with it ON
+# (#381) — comment the block out to keep config.toml strictly read-only:
+[config]
+export-path = "~/.config/facet/config.snapshot.toml"
+auto-promote = true
+
+
+# -----------------------------------------------------------------
+# Tag vocabulary — [tags]
+# -----------------------------------------------------------------
+# Names offered as autocomplete in the tree's tag editor (`t`) BEFORE
+# any window carries them — a starter vocabulary. Names only (tag
+# COLORS are runtime). When [config] auto-export is on, this list grows
+# automatically as you create tags. `[]` / omitted = none.
+# [tags]
+# defined = ["web", "code", "chat"]
 
 
 # -----------------------------------------------------------------
@@ -49,7 +106,6 @@
 #
 # Light:
 #   "github-light"     — GitHub light; blue + violet on white. System font.
-#   "catppuccin-latte" — soft pastel light (Latte); purple + teal.
 #
 # Adaptive:
 #   "system"           — native vibrancy + dynamic colors, follows macOS
@@ -60,7 +116,7 @@
 #                        (excludes "system").
 #
 # Unknown names clamp to "terminal". CLI override (session only):
-# `facet --theme=dracula`.
+# `facet --theme dracula`.
 [theme]
 name = "terminal"
 
@@ -141,7 +197,7 @@ cols = 5
 label-position = "up"
 
 # Background ScreenCaptureKit refresh cadence (seconds) that keeps
-# grid-view thumbnails warm so `--view=grid` paints immediately
+# grid-view thumbnails warm so `--view grid` paints immediately
 # with real screenshots instead of icon-fallback. 0 disables the
 # background refresh entirely (cells still capture on demand the
 # first time the grid opens, just with a brief icon flash).
@@ -167,7 +223,7 @@ theme = ""
 #   "left"             — strip down the left, browse with ↑/↓
 #   "right"            — strip down the right, browse with ↑/↓
 #
-# A one-off `facet --view=rail --edge=NAME` overrides this for that
+# A one-off `facet --view rail --edge NAME` overrides this for that
 # open. Unknown / unset → "bottom".
 edge = "bottom"
 
@@ -225,9 +281,12 @@ preview-mode = "popover"
 # Tree-panel geometry — where the sidebar opens and its size, in
 # screen points with a TOP-LEFT origin: (0,0) is the top-left corner
 # of the main screen, x grows right, y grows DOWN. Same coords as the
-# CLI `facet --view=tree --pos-x/--pos-y/--width/--height`. All FOUR
-# are needed to take effect; a partial set is ignored (logged). Leave
-# all unset for the built-in default (top-left, auto height). This
+# CLI `facet --view tree --pos-x/--pos-y/--width/--height`. All FOUR
+# are needed to take effect; a partial set is ignored (logged), and
+# width + height must each be greater than 0 (a zero / negative size is
+# dropped silently). pos-x / pos-y may be negative (handy for an
+# off-screen or secondary-display corner). Leave all unset for the
+# built-in default (top-left, auto height). This
 # config value is authoritative each launch / `--reload` — dragging or
 # resizing the panel, or a CLI geom flag, only lasts the session, so
 # set it here to make a position / size stick.
@@ -265,7 +324,7 @@ preview-mode = "popover"
 [layout]
 
 # Startup layout mode every workspace begins in. Layout mode is
-# otherwise session-only (set live with `facet workspace --layout=NAME`
+# otherwise session-only (set live with `facet workspace --layout NAME`
 # and lost on restart), so this is the seed each launch — and each
 # mac desktop's independent catalog — starts every workspace
 # from.
@@ -284,7 +343,7 @@ preview-mode = "popover"
 # Unknown / unset clamps to "float" (a typo can't break tiling). To
 # tile by default, set this to "bsp"; per-workspace tweaks are still
 # done live via the CLI.
-default = "grid"
+default = "float"
 
 # Spacing for tiled windows, in points. Everything here defaults to 0
 # — windows tile flush, edge-to-edge (facet's behaviour before gaps
@@ -353,7 +412,7 @@ enabled = false
 # event-driven — sub-toggle for background reflows (window open / close
 # rearranges the remaining tiled windows). Defaults to true when the
 # master `enabled` switch is on. Flip to false to keep WS-switch + your
-# own `--toggle-float` / `--layout=` retiles animated but snap on
+# own `--toggle-float` / `--layout NAME` retiles animated but snap on
 # background opens / closes. New windows always snap to their tile slot
 # regardless (they don't have a meaningful "previous" position to glide
 # from).
@@ -419,8 +478,10 @@ enabled = false
 #                unnamed (empty-title) window.
 #   role       — exact AX role     (e.g. "AXWindow").
 #   subrole    — exact AX subrole  (e.g. "AXDialog").
-#   max-width  — match windows no wider than this (points).
-#   max-height — match windows no taller than this (points).
+#   max-width  — match windows no wider than this (whole points).
+#   max-height — match windows no taller than this (whole points).
+#                Integers only — a fractional value (e.g. 100.5) is
+#                silently ignored, applying no size constraint.
 #
 # action defaults to "float". A rule with no match key is ignored (it
 # would match nothing). A bad regex simply never matches — it can't
@@ -466,45 +527,75 @@ action = "ignore"
 
 
 # -----------------------------------------------------------------
-# [grouping] — how windows are grouped: by facet workspace (default)
-# or by dwm-style tags (M11-3). `by=tag` replaces the per-mac-desktop
-# workspace list with one "tag world" per mac desktop: a window can
-# carry multiple tags, and `facet lens` picks which tag set is shown
-# (windows outside the lens are anchor-parked, same as a hidden
-# workspace). Default: workspace. Unknown value clamps to workspace.
+# Filter aliases  [alias]
 # -----------------------------------------------------------------
-# [grouping]
-# by = "tag"
-
-# -----------------------------------------------------------------
-# [[tag]] — the tag vocabulary for `by=tag` mode (ignored in
-# workspace mode). One table per tag; declaration order is the tag
-# order (a window's first matching tag is its "primary"). Tables with
-# no non-empty name, or a duplicate name, are dropped.
-# -----------------------------------------------------------------
-# [[tag]]
-# name = "web"
-# [[tag]]
-# name = "code"
-# [[tag]]
-# name = "chat"
-
-# -----------------------------------------------------------------
-# [[assign]] — statically map windows to tags at startup (`by=tag`
-# only; runtime re-tagging isn't supported). Match keys mirror
-# [[exclude]] (app / title / role / subrole substring-regex,
-# max-width / max-height). Tags come from `tag = "x"` and/or
-# `tags = ["x", "y"]` (unioned). A table with no match key or no tag
-# is dropped; an unknown tag name (not declared in [[tag]]) is a
-# startup error.
-# -----------------------------------------------------------------
-# [[assign]]
-# app = "com.google.Chrome"
-# tag = "web"
+# Name a facet-filter expression once, reference it as `@NAME` anywhere
+# a filter appears: `[desktop.N] match`, `[[rule]] match`,
+# `facet section --match`, `facet query --filter`.
 #
-# [[assign]]
-# app = "com.apple.dt.Xcode"
-# tags = ["code"]
+#   - Names are kebab-case ([a-z][a-z0-9-]*); references are
+#     case-insensitive. Aliases may reference other aliases; a cycle is
+#     rejected loudly. An empty expression is rejected too (it would
+#     match EVERYTHING).
+#   - A `match` referencing an alias that doesn't exist DROPS that
+#     desktop / rule with an error (`facet config --validate` exits 1)
+#     rather than silently matching nothing.
+#   - Display-name inheritance: an isolate desktop whose `match` is a
+#     single alias reference and whose `label` is omitted shows the
+#     alias name as its section header.
+#   - Definitions live HERE only (hot-reload picks up edits); the CLI
+#     and GUI consume them but never define them.
+#
+# Example — uncomment / adapt:
+#
+# [alias]
+# web = 'app~=Chrome or app~=Safari or app~=Firefox'
+# work = '@web or app=Slack'         # nesting is fine
+
+
+# -----------------------------------------------------------------
+# Adopt-rules  [[rule]]   (the declarative successor to [[assign]])
+# -----------------------------------------------------------------
+# When a NEW window matches `match` (a facet filter WHERE-clause), the
+# rule's facets are set on it the moment facet adopts it. Global (applies
+# on every mac desktop), evaluated in declaration order; a window picks up
+# every matching rule's facets.
+#
+#   match    — facet filter WHERE-clause: `field op value` joined by
+#              `and`/`or`/`not`/`()`. ops: `=` `~=`(token) `^=`(prefix)
+#              `$=`(suffix) `*=`(substring). Bare field = presence
+#              (`floating`, `not tag`). Fields: app, title, bundleId,
+#              workspace, tag, floating, sticky, master, scratchpad,
+#              desktop, onscreen, focused. A malformed match is loud +
+#              non-fatal (that rule is skipped; the rest still run).
+#   workspace — move the matched window to this named workspace.
+#   tags      — tags to add (feeds an isolate desktop's `match`; same as `facet window --tag`).
+#   floating / sticky / master — set the matching facet (true / false).
+#
+# Examples — uncomment / adapt:
+#
+# [[rule]]                          # Safari windows → tagged "web", floated
+# match = "app=Safari"
+# tags = ["web"]
+# floating = true
+#
+# [[rule]]                          # any window whose title mentions "PR" → "review"
+# match = "title*=PR"               # quote multi-word values: title*="Pull Request"
+# tags = ["review"]
+
+
+# -----------------------------------------------------------------
+# Per-window tags (no config key — assigned at RUNTIME only)
+# -----------------------------------------------------------------
+# A window can carry any number of free-form string tags. There is no
+# tag vocabulary to declare here — tags are created on first use and
+# attached live with the CLI:
+#   facet window --tag NAME / --untag NAME / --toggle-tag NAME
+#   facet window --retag OLD NEW
+# Tags are session-only (never persisted) and per-mac-desktop. They
+# feed an isolate DESKTOP's filter: a `[desktop.N] type = "isolate"` whose
+# `match` contains `tag~=NAME` (see [desktop.N] below) tiles every window
+# carrying NAME. `facet query --tags` lists every tag currently in use.
 
 
 # -----------------------------------------------------------------
@@ -522,15 +613,15 @@ action = "ignore"
 # config key. Each WS starts at `[layout] default` (see above) and
 # can be changed live with:
 #
-#     facet workspace --focus=1
-#     facet workspace --layout=bsp     # this WS now auto-tiles BSP
-#     facet workspace --layout=stack   # or single-window stack mode
+#     facet workspace --focus 1
+#     facet workspace --layout bsp     # this WS now auto-tiles BSP
+#     facet workspace --layout stack   # or single-window stack mode
 #
 # Other tiling-related verbs:
 #     facet workspace --retile             # recompute + reapply layout
 #     facet window --toggle-float          # exclude window from layout
 #     facet window --toggle-orientation    # rotate parent split (bsp)
-#     facet window --cycle-stack=next|prev # rotate stack focus
+#     facet window --cycle-stack next|prev # rotate stack focus
 #
 # Frozen scope: bsp / stack / float. master_stack / scrolling /
 # traditional are out (see docs/architecture.md "Phase γ frozen
@@ -542,57 +633,119 @@ action = "ignore"
 # `[layout] default` above to control what every WS starts at.
 
 # -----------------------------------------------------------------
-# Per-mac-desktop workspaces  [desktop.N]
+# Per-mac-desktop sections  [[desktop.N.section]]
 # -----------------------------------------------------------------
 # facet keeps an INDEPENDENT set of workspaces for each mac desktop.
-# Switch mac desktops (Mission Control / Ctrl+arrow) and the
-# tree shows that desktop's own facet workspaces; a window stays in the
-# desktop it was opened on (facet never moves windows across desktops).
+# Switch mac desktops (Mission Control / Ctrl+arrow) and the tree shows
+# that desktop's own facet workspaces; a window stays in the desktop it
+# was opened on (facet never moves windows across desktops).
 #
-# `[desktop.N]` gives the Nth mac desktop (Mission Control order,
-# 1-based, user desktops only — fullscreen desktops don't count) its own
-# workspace list. Each entry is a 1-indexed inline-table value:
+# Zero config: with NO [[desktop.N.section]] blocks anywhere, every mac
+# desktop is managed with the default 5 workspaces. It just works.
 #
-#   N = { name = "..." }                    # name only
-#   N = { name = "...", layout = "bsp" }    # name + startup layout
+# To shape a mac desktop, describe an ORDERED list of workspace SPATIAL
+# cells with `[[desktop.N.section]]` (N = Mission Control order, 1-based,
+# user desktops only — fullscreen desktops don't count). The array ORDER
+# is the tree's display order; the COUNT of sections is that desktop's
+# live workspace count. Each section is a workspace cell:
 #
-# `layout` is optional — when omitted the WS starts at the global
-# `[layout] default` above. Valid `layout` values are the layout
-# engines registered at startup (float / bsp / stack / master-left /
-# master-right / master-top / master-bottom / master-center / spiral /
-# grid); an unknown value is silently dropped (the WS then starts at
-# the global default).
+#   label   — (optional) the workspace's display name; omit → unnamed,
+#             shown by its 1-based index. A non-empty label must be unique
+#             on the desktop (dup → loud warn + first-wins). `facet
+#             workspace --rename` overrides at runtime.
+#   layout  — (optional) the workspace's startup tiling engine (bsp /
+#             stack / master-left / …); runtime-changeable.
 #
-# Two modes, decided by whether ANY [desktop.N] section exists:
-#   - NO [desktop.N] anywhere → every mac desktop is managed with the
-#     default 5 workspaces. Zero config, just works.
-#   - ANY [desktop.N] present → OPT-IN. facet manages ONLY the desktops
-#     that have a section. A desktop without one is left completely
-#     untouched: no facet workspaces, windows stay as-is, and the
-#     facet panel is hidden on that desktop.
+# 🪦 `unassigned = true` (the "Lost & Found" receptacle) was RETIRED in t-6rbc.
+#    Nothing in facet could ever put a window in it — every managed window is
+#    in a workspace — so it rendered a section that could only ever be EMPTY.
+#    A leftover `unassigned` row is now a LOUD error and the row is DROPPED
+#    (not silently promoted to a workspace cell, which would add a workspace
+#    and change your layout). Delete it; you lose nothing.
+#
+# The tree, the grid (`--view grid`), and the rail (`--view rail`) all
+# render the sections in declaration order. A window's membership changes
+# by DRAG (between workspaces) or `facet window --move-to N`.
+#
+# OPT-IN: as soon as ANY [[desktop.N.section]] (or [desktop.N]) block
+# exists, facet manages ONLY the desktops that have one. A desktop without
+# one is left completely untouched — no facet workspaces, windows stay
+# as-is, the panel is hidden there. On single-desktop / SkyLight-
+# unavailable setups facet falls back to the default 5 unnamed workspaces.
 #
 # Caveat: the mapping is by Mission Control position. Reordering your
-# desktops re-points these sections (names/counts only — your windows
+# desktops re-points these sections (counts / layouts only — your windows
 # stay correctly scoped to their real desktop).
+#
+# -----------------------------------------------------------------
+# Typed desktops  [desktop.N]
+# -----------------------------------------------------------------
+# A mac desktop may be TYPED with a single [desktop.N] table (N = the same
+# Mission Control ordinal): type = "workspace" or "isolate". One ordinal = one
+# desktop = one type; use two mac desktops to have both kinds. Hierarchy:
+# mac desktop > section > window.
+#
+#   type = "workspace" — the classic desktop: its [[desktop.N.section]]
+#       blocks above describe it (the [desktop.N] table just makes the type
+#       explicit). This is the implied type when only section blocks exist,
+#       so a sections-only config needs no [desktop.N] table at all.
+#   type = "isolate" — an ALWAYS-ON filtered desktop (no sections, no sub-
+#       workspaces). Whenever that mac desktop is active, facet tiles the
+#       windows matching `match` with `layout` and anchor-parks the rest to
+#       a screen corner (sticky windows are exempt). Entering the desktop IS
+#       the focus; leaving it un-parks nothing (the parked windows belong to
+#       that desktop). Change what it shows live with `facet section --match
+#       1 "expr"` (session-only) or the tree header's "Edit match".
+#       TREE-ONLY: `--view grid` / `--view rail` are rejected there (an isolate desktop
+#       desktop is dynamic — no fixed picture to thumbnail).
+#       Keys (written directly on the [desktop.N] table):
+#         match   — REQUIRED: a facet-filter WHERE-clause (same grammar as
+#                   `facet query --windows --filter`) selecting the tiled
+#                   windows, e.g. 'app~=Chrome or app~=Safari' or 'tag~=web'.
+#                   An empty match ('') matches nothing → every window parks,
+#                   so give it a CONCRETE predicate. Missing → the desktop is
+#                   dropped, loud.
+#         layout  — (optional) layout-engine name for the matched windows;
+#                   "float" keeps them floating. Non-matching still park.
+#         show-non-matching — (optional, default false) true → the tree adds
+#                   a second "holding" section listing the parked non-
+#                   matching windows; false → the matched section alone.
+#         label   — (optional) display name for the desktop. DISPLAY ONLY:
+#                   an isolate desktop's single workspace is UNNAMED, so `label`
+#                   is not a value your `match` can compare against (t-j7ps). It
+#                   used to name that workspace too — which meant renaming the
+#                   desktop could silently break its own `match`, at the NEXT
+#                   launch. A `match` that references `workspace` on an isolate
+#                   desktop is now a loud error: the field is always empty there,
+#                   so the predicate is a constant. Match on what the windows ARE
+#                   (app / title / tag / floating).
+#
+# ACTIVE SAMPLE — two mac desktops. Desktop 1 is a classic WORKSPACE desktop:
+# a NAMED "Main" workspace + an unnamed one (shown by index).
+# Desktop 2 is an always-on ISOLATE desktop that tiles your browser
+# windows and parks everything else. Because these blocks exist, facet is
+# OPT-IN: it manages desktops 1–2 and leaves every OTHER mac desktop
+# untouched. Edit to taste, or comment this whole sample out to fall back to
+# the zero-config default (every mac desktop gets 5 unnamed workspaces).
 
-# Recommended starter — covers a common 3-desktop dev workflow.
-# Edit the names / counts / layouts to taste, or comment the whole
-# block out to fall back to facet's default (5 unnamed WSs / desktop).
+# Desktop 1 — a WORKSPACE desktop: one section per workspace cell. A named
+# "Main" workspace (header `1 (Main)`) next to an unnamed one (header `2`).
+[[desktop.1.section]]
+label = "Main"
+layout = "bsp"
 
-[desktop.1]
-1 = { name = "Dev" }
-2 = { name = "Web" }
-3 = { name = "Notes" }
+[[desktop.1.section]]
+layout = "stack"
 
+# Desktop 2 — an always-on ISOLATE desktop: tiles the browser windows (a
+# CONCRETE match, never '') with bsp, parks everything else, and shows the
+# parked ones as a second "holding" tree section. Retarget live with
+# `facet section --match 1 "app~=Slack"` or the tree header's "Edit match".
+# With an [alias] defined (above), `match = '@web'` works here too — and
+# with `label` omitted the section header shows the alias name.
 [desktop.2]
-1 = { name = "Code" }
-2 = { name = "Build" }
-3 = { name = "Logs" }
-4 = { name = "Test" }
-
-[desktop.3]
-1 = { name = "Mail" }
-2 = { name = "Chat" }
-3 = { name = "Cal" }
-4 = { name = "Tasks" }
-5 = { name = "Docs" }
+type = "isolate"
+label = "Web"
+match = 'app~=Chrome or app~=Safari or app~=Firefox'
+layout = "bsp"
+show-non-matching = true
