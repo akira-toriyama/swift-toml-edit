@@ -86,7 +86,7 @@ jobs:
           # Drop the persisted checkout token. t-yaxa
           persist-credentials: false
       - name: Install Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v6.5.0
         with:
           go-version: "stable"
       - name: Install toml-test (pinned)
