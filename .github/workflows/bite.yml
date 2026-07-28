@@ -16,6 +16,6 @@ concurrency:
 
 jobs:
   bite:
-    uses: akira-toriyama/.github/.github/workflows/swift-bite.yml@b927b8da4e130c7f68ac607ce11669f02085154d
+    uses: akira-toriyama/.github/.github/workflows/swift-bite.yml@89a38273368c47fa75af489c2a2e4a8ac51f10cc
     with:
       runner: macos-15
