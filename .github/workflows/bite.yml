@@ -1,0 +1,30 @@
+name: bite
+
+# swift-bite — runs this pull request's new/changed Swift tests (XCTest and
+# swift-testing alike) against the source BEFORE the pull request, and fails
+# when every one of them still passes: a test that would have been green
+# without the fix it accompanies is not evidence. Reasoning, verdict rules and
+# the two opt-outs (`bite-exempt: <reason>` above a test / a `Bite-exempt:`
+# commit trailer): akira-toriyama/.github docs/swift-bite.md.
+#
+# Runs only on pull_request (push has no claim under review) and stands down,
+# green and explained, when there is nothing to prove — safe as a required
+# check. Live-ammunition record (fired both ways before adoption): PR #29.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bite-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bite:
+    uses: akira-toriyama/.github/.github/workflows/swift-bite.yml@v2
+    with:
+      # Matches ci.yml's test-macos runner (the package floor is macOS 13; the
+      # reusable's default is the app family's macos-26).
+      runner: macos-15
