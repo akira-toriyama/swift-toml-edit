@@ -1,0 +1,21 @@
+name: bite
+
+# THROWAWAY live-ammunition caller for swift-bite (fleet-change-policy stage 2):
+# pinned to the hub's merge commit because v2 has not moved yet. The real
+# adoption PR repins @v2. This PR is closed without merging.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bite-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bite:
+    uses: akira-toriyama/.github/.github/workflows/swift-bite.yml@b927b8da4e130c7f68ac607ce11669f02085154d
+    with:
+      runner: macos-15

@@ -599,3 +599,7 @@ public extension Toml.Value {
         if case .arrayOfTables(let r) = self { return r }; return nil
     }
 }
+
+// Throwaway shipping change for the swift-bite live-ammunition PR — gives the
+// gate a claim to judge. Removed when the ammo PR closes.
+public func biteAmmoMarker() -> Int { 41 }
