@@ -1,14 +1,27 @@
 # Release — a Swift library is consumed by SwiftPM PURELY BY GIT TAG, so there
 # is no .app/.zip/Homebrew artifact (the family's app-oriented `release.yml`
-# reusable does not apply). Cutting a release is: `git tag vX.Y.Z && git push
-# --tags`; this workflow then generates notes with git-cliff (the family's
-# changelog tool) and creates the GitHub Release for that tag. The human
-# controls WHEN to tag (right for a correctness-critical lib: tag only after
-# CI conformance + round-trip are green).
+# reusable does not apply: its app:/binary: inputs exist to build and attach an
+# artifact, and toml-decode/toml-encode are the toml-test harness, not products
+# to ship). A push to main makes `glyph release` walk main's squash commits
+# since the last v* tag, resolve each to its merged PR (squash-safe), and
+# upsert ONE glyph-managed rolling DRAFT release. No git tag exists until a
+# human publishes the draft — which keeps the old rule (tag only after CI
+# conformance + round-trip are green) while the version and the notes come
+# from glyph, the fleet's single source of truth (previously git-cliff, the
+# fleet's last non-glyph release path together with canon).
 name: Release
 on:
   push:
-    tags: ['v*']
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Preview only (no draft write)"
+        type: boolean
+        default: false
+concurrency:
+  group: release
+  cancel-in-progress: false
 permissions:
   contents: write
 jobs:
@@ -18,17 +31,43 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          # glyph walks the tags and the range out of LOCAL git, so the full
+          # history must be here.
           fetch-depth: 0
-          # git-cliff only reads local git history (no [remote] in cliff.toml);
-          # the release is created via the gh API token, never git push — the
-          # tag is pushed by the human. Drop the checkout token. t-yaxa
+          # Every release write goes through glyph/gh + the GH_TOKEN env,
+          # never git push — drop the checkout token. t-yaxa
           persist-credentials: false
-      - uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2
+      - uses: akira-toriyama/glyph/.github/actions/install@v0.12.0
         with:
-          tool: git-cliff@2
-      - name: Generate notes for this tag
-        run: git-cliff --config cliff.toml --current --strip all > RELEASE_NOTES.md
-      - name: Create GitHub Release
+          version: v0.12.0
+          token: ${{ github.token }}
+      # ONE walk composes the whole verdict (tag + body) and, unless this is
+      # a dry run, upserts the rolling draft in the same call. Exit 1 is the
+      # uniform soft no-release: fold it into a success no-op here.
+      - name: Compose the verdict and upsert the rolling DRAFT
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --notes-file RELEASE_NOTES.md
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' \
+            "## Install" \
+            "" \
+            "SwiftPM consumes this library by git tag:" \
+            "" \
+            '```swift' \
+            '.package(url: "https://github.com/akira-toriyama/swift-toml-edit", from: "<this release>")' \
+            '```' > "$RUNNER_TEMP/install-notes.md"
+          args=(release --json --footer-file "$RUNNER_TEMP/install-notes.md")
+          if [ "$DRY_RUN" = "true" ]; then
+            args=(release --dry-run --json --footer-file "$RUNNER_TEMP/install-notes.md")
+          fi
+          status=0
+          glyph "${args[@]}" > "$RUNNER_TEMP/verdict.json" 2> "$RUNNER_TEMP/verdict.err" || status=$?
+          cat "$RUNNER_TEMP/verdict.err" >&2
+          cat "$RUNNER_TEMP/verdict.json" || true
+          if [ "$status" -eq 1 ]; then
+            echo "::notice::no release-worthy changes since the last tag — nothing to do."
+            exit 0
+          fi
+          exit "$status"
