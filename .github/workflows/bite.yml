@@ -23,7 +23,7 @@ concurrency:
 
 jobs:
   bite:
-    uses: akira-toriyama/.github/.github/workflows/swift-bite.yml@v2
+    uses: akira-toriyama/.github/.github/workflows/swift-bite.yml@v2.1.2
     with:
       # Matches ci.yml's test-macos runner (the package floor is macOS 13; the
       # reusable's default is the app family's macos-26).
