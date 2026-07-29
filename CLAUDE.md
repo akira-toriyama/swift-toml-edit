@@ -84,9 +84,10 @@
   `canImport(AppKit)`-free so the Linux + conformance jobs stay valid.
 
 ## Conventions inherited from the family
-- Commits: gitmoji + Conventional Commits (`:emoji: type(scope): subject`),
-  enforced by the reusable commit-lint and consumed by git-cliff for release
-  notes. License: MIT.
+- Commits: gitmoji-driven (`<:gitmoji:>[(<scope>)][!] <subject>`), enforced by
+  the reusable commit-lint; glyph derives the release version and notes from
+  them (rolling draft on push to main — publishing the draft cuts the tag).
+  License: MIT.
 - Respond to the maintainer in Japanese (code / identifiers stay in the
   existing English conventions).
 - Implementation order is late-binding (per the brief): build the lib to v1.0
