@@ -210,7 +210,7 @@ struct StrictParser {
     // MARK: arrays
 
     mutating func parseArray() throws -> Toml.TypedValue {
-        i += 1   // '['
+        i += 1
         var out: [Toml.TypedValue] = []
         skipSpacesAndNewlines()
         if peek() == "]" { i += 1; return .array(out) }
@@ -236,7 +236,7 @@ struct StrictParser {
     // MARK: inline tables (single line; newline inside is invalid)
 
     mutating func parseInlineTable() throws -> Toml.TypedValue {
-        i += 1   // '{'
+        i += 1
         // Build through the redefinition machine so internal conflicts
         // (`{a.b=1, a.b.c=2}`, `{b=1, b.c=2}`, duplicate keys) are rejected.
         let t = Toml.TreeTable(kind: .inline)
@@ -565,8 +565,8 @@ extension Toml {
     /// identity: a basic-quoted key (`"…"`) has its escapes processed (so
     /// `"À"` and `À` are the SAME key), a literal-quoted key (`'…'`) is
     /// verbatim, a bare key is returned unchanged. Best-effort — an invalid
-    /// escape falls back to the raw interior; strict key-escape rejection is the
-    /// decoder's job (step 7).
+    /// escape falls back to the raw interior; strict key-escape rejection is
+    /// `lexDottedPathStrict`'s job.
     static func decodeKeySegment(_ raw: String) -> String {
         let a = Array(raw.unicodeScalars)
         guard a.count >= 2 else { return raw }

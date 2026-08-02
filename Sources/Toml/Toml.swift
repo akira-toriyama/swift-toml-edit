@@ -232,9 +232,9 @@ public enum Toml {
         for c in s {
             if inStr {
                 if escaped {
-                    escaped = false                  // this char is literal
+                    escaped = false
                 } else if c == "\\" && quote == "\"" {
-                    escaped = true                   // only basic strings escape
+                    escaped = true
                 } else if c == quote {
                     inStr = false
                 }
@@ -357,7 +357,7 @@ public enum Toml {
             return .table(t)
         }
         if raw.hasPrefix("0x"), let i = Int64(raw.dropFirst(2), radix: 16) {
-            return .int(i)                          // hex int (e.g. colors)
+            return .int(i)
         }
         if let i = Int64(raw) { return .int(i) }    // int before double
         if let d = Double(raw) { return .double(d) }

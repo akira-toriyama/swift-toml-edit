@@ -7,7 +7,7 @@
 // daemon relies on lives in the LOSSY PROJECTION, not here — a format-preserving
 // editor must understand the whole document, not silently drop part of it.
 //
-// Multi-line constructs (arrays, inline tables, and — since M2 step 1 —
+// Multi-line constructs (arrays, inline tables, and — since M2 —
 // multi-line basic/literal strings `"""`/`'''`) span physical lines: a value
 // is consumed line-by-line until it closes (see `Toml.lexValueOpen` and the
 // shared string-aware scanners in Lexer.swift). The tiler is concerned with

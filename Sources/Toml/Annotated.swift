@@ -26,12 +26,12 @@
 // Scope: the parser tiles every construct losslessly for round-trip — std
 // tables (incl. dotted / quoted-key / numeric-segment headers), arrays-of-
 // tables, single-line inline tables, single- and multi-line arrays, and
-// single- AND multi-line basic / literal strings (`"""`/`'''`, M2 step 1).
-// Values are kept as raw spelling; a typed decode is available on demand via
-// `Entry.value`. The remaining M2 work is on the strict typed DECODE layer
-// (full datetimes, octal / binary, float specials, the redefinition state
-// machine, invalid-value rejection) and per-element editing — additive, since
-// it reads the raw spelling without touching this byte-preserving contract.
+// single- AND multi-line basic / literal strings (`"""`/`'''`).
+// Values are kept as raw spelling; a lenient typed decode is available on
+// demand via `Entry.value`, the conformance-grade strict decode + the
+// redefinition state machine live in DecodeStrict.swift / TypedTree.swift,
+// and per-element editing in AnnotatedEdit.swift — all additive: they read
+// the raw spelling without touching this byte-preserving contract.
 
 import Foundation
 
