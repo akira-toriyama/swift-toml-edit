@@ -164,6 +164,28 @@ import Foundation
         #expect(doc.root.entries[0].value?.asStringArray == ["Button", "Link"])
     }
 
+    // MARK: - Entry.value answers nil for a multi-line string spelling (t-fjr0)
+
+    // The lenient decode rides parseFlat, whose naive quote model closes a
+    // triple quote early and fabricates a plausible fragment (`"""` read as
+    // the one-char string `"`). The tiler DOES hand multi-line string
+    // spellings to `valueText`, so without the up-front rejection the
+    // fabricated value reaches the public `Entry.value` — which documents
+    // "nil outside the M1 scalar grammar". Byte-identical round-trip must
+    // survive alongside the nil.
+    @Test func entryValueNilForMultilineStringSpellings() throws {
+        for s in [
+            "a = \"\"\"\nhello\n\"\"\"\n",
+            "a = \"\"\"hello\"\"\"\n",
+            "a = '''\nhi\n'''\n",
+        ] {
+            let doc = try parsed(s)   // parsed() asserts byte-identical round-trip
+            let e = try #require(doc.root.entries.first)
+            #expect(e.value == nil,
+                    "fabricated \(String(describing: e.value)) for \(s.debugDescription)")
+        }
+    }
+
     // MARK: - A quoted key containing '=' splits on the real separator
 
     @Test func quotedKeyContainingEquals() throws {
