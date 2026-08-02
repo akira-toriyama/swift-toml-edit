@@ -260,6 +260,12 @@ extension Toml {
     /// round-tripping through `parseFlat`, so it can never drift from it.
     /// Returns nil for spellings outside the M1 scalar grammar.
     static func decodeScalar(_ text: String) -> Toml.Value? {
-        Toml.parseFlat("__v__ = \(text)").tables[""]?["__v__"]
+        // A triple-quoted spelling must be rejected up front (like the strict
+        // fold does): it is outside the M1 grammar, but the naive quote model
+        // would close it early and fabricate a plausible fragment (`"""` reads
+        // as the string `"`) instead of failing — the tiler hands multi-line
+        // string spellings to `valueText`, so this IS reachable (t-fjr0).
+        if containsMultilineStringSpelling(text) { return nil }
+        return Toml.parseFlat("__v__ = \(text)").tables[""]?["__v__"]
     }
 }
