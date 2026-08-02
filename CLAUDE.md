@@ -4,8 +4,8 @@
 - `swift-toml-edit` = the atelier family's ONE format-preserving TOML library
   (Swift's missing toml_edit / tomlkit). Module name is `Toml` (bare,
   idiomatic — like `Algorithms` / `OrderedCollections`). This is **Sill-1** of
-  the atelier refactor: it REPLACES sill's lossy `Toml` module entirely, and the
-  five consumers (perch / wand / chord / facet / ConfigSchema) migrate to it.
+  the atelier refactor: it REPLACED sill's lossy `Toml` module entirely, and the
+  five consumers (perch / wand / chord / facet / ConfigSchema) import it.
 - Standalone OSS repo, NOT inside atelier — the EXPLICIT exception to the
   family's "no new repos" rule (correctness-critical, sill has no CI,
   self-contained, fills a real Swift OSS gap, clean end-state). Canonical
@@ -90,7 +90,9 @@
   License: MIT.
 - Respond to the maintainer in Japanese (code / identifiers stay in the
   existing English conventions).
-- Implementation order is late-binding (per the brief): build the lib to v1.0
-  against the family's real configs as goldens BEFORE swapping consumers; then
-  swap all five in one wave; then remove sill's `Toml`; app write-back UX
-  (wand#130 etc.) is separate product work, after.
+- The brief's implementation order has fully LANDED: the lib was built against
+  the family's real configs as goldens, all five consumers import the external
+  `Toml` package (the swap landed piecemeal, not as the planned one wave —
+  same end-state), and sill's in-tree `Toml` is removed. Current state lives
+  in each consumer's `Package.resolved`, not here. App write-back UX
+  (wand#130 etc.) is separate product work, still ahead.
