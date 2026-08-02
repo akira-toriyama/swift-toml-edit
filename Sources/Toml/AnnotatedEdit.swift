@@ -25,7 +25,7 @@
 // Identity permutations are byte-stable. ASSUMES newline-terminated lines —
 // true for every hand-edited family config (all end in `\n`); moving a final
 // line that lacks a trailing newline to a non-final slot would need one added
-// (handled when M2 adds separator normalization).
+// (unimplemented — no consumer produces that input).
 
 public extension Toml.Annotated {
 

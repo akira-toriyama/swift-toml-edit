@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import Toml
 
-// Step 1 of M2: the lossless tiler must handle multi-line strings (`"""`/`'''`).
+// M2: the lossless tiler must handle multi-line strings (`"""`/`'''`).
 // Before this, a value opening a triple quote made `Toml.Annotated(parsing:)`
 // THROW (`expected '='` on the body line) or mis-tile body lines as phantom
 // headers / key=values.

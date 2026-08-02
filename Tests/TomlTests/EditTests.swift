@@ -143,8 +143,6 @@ import Foundation
         #expect(out == "[a]\nx = 1\n\n")
     }
 
-    // MARK: - On a real config (wand's 4 cursor rules)
-
     // MARK: - Set a value in place (v2.1.0)
 
     @Test func setValuePreservesFormatting() throws {

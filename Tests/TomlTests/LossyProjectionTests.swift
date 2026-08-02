@@ -338,7 +338,7 @@ private func crlfTwin(of lf: String) throws -> String {
     #expect(dom.root.entry(forKey: "xs")?.value == .array([.int(1), .int(2)]))
 }
 
-// MARK: - Multi-line arrays (the Phase 1.6 superset delta + perch bug fix)
+// MARK: - Multi-line arrays (the superset over sill's parsers + perch bug fix)
 
 @Test func multilineArrayFlat() {
     let doc = Toml.parseFlat("""
@@ -443,8 +443,8 @@ func realConfigsReadIdenticallyAsCRLF(_ name: String) throws {
     #expect(doc.tables["overlay.sound"]?["volume"]?.asDouble == 0.5)
 }
 
-/// The Phase 1.6 fix: perch ships a MULTI-LINE `roles` array that the old
-/// single-line parsers silently dropped. The shared parser now reads it.
+/// perch ships a MULTI-LINE `roles` array that sill's old single-line
+/// parsers silently dropped. The shared parser reads it.
 @Test func perchMultilineRolesNowParses() throws {
     let doc = Toml.parseFlat(try fixture("perch.config"))
     let roles = try #require(
