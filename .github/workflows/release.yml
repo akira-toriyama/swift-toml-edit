@@ -37,9 +37,9 @@ jobs:
           # Every release write goes through glyph/gh + the GH_TOKEN env,
           # never git push — drop the checkout token. t-yaxa
           persist-credentials: false
-      - uses: akira-toriyama/glyph/.github/actions/install@v0.12.0
+      - uses: akira-toriyama/glyph/.github/actions/install@v1.0.0
         with:
-          version: v0.12.0
+          version: v1.0.0
           token: ${{ github.token }}
       # ONE walk composes the whole verdict (tag + body) and, unless this is
       # a dry run, upserts the rolling draft in the same call. Exit 1 is the
