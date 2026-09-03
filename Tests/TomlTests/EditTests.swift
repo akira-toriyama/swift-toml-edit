@@ -2,10 +2,9 @@ import Testing
 import Foundation
 @testable import Toml
 
-// The minimal edit ops (brief Q3): reorder / delete array-of-tables elements,
-// delete a std table. Each returns a NEW document and the result must itself
-// be valid (re-parses, round-trips), with per-element banners travelling with
-// their element.
+// The edit ops. Every result must itself be valid (re-parses, round-trips),
+// with per-element banners travelling with their element and every
+// untouched byte left verbatim.
 
 @Suite struct EditTests {
 
@@ -20,9 +19,9 @@ import Foundation
     // MARK: - Reorder
 
     @Test func reorderSwapIsExactWhenSeparatorsUniform() throws {
-        // When every element is followed by a blank-line separator (here the
-        // AoT is followed by another block), reorder is byte-clean: bodies
-        // swap and the uniform separators stay.
+        // The trailing `[z]` block gives the LAST element a separator too, so
+        // every element has one and the swap is byte-exact (see the
+        // last-element caveat in AnnotatedEdit.swift).
         let src = """
         [[rule]]
         name = "a"
@@ -49,10 +48,9 @@ import Foundation
     }
 
     @Test func reorderCarriesPerElementBanner() throws {
-        // A per-element banner comment travels with its element (the family's
-        // [[exclude]] blocks each carry an explaining comment). The `[top]`
-        // block ensures the AoT elements are not the document's first content
-        // (whose banner would be absorbed into the never-moving doc leading).
+        // The `[top]` block keeps the AoT elements away from the document's
+        // first content token, whose banner would be absorbed into the
+        // never-moving doc leading and NOT travel.
         let src = """
         [top]
         k = 1
@@ -68,14 +66,11 @@ import Foundation
         """
         let doc = try Toml.Annotated(parsing: src)
         let out = doc.reorderingArrayOfTables(at: ["rule"], [1, 0]).render()
-        // each banner is now immediately above its own element's header
         #expect(out.contains("# rule b\n[[rule]]\nname = \"b\""))
         #expect(out.contains("# rule a\n[[rule]]\nname = \"a\""))
-        // order actually swapped
         let bIdx = try #require(out.range(of: "name = \"b\""))
         let aIdx = try #require(out.range(of: "name = \"a\""))
         #expect(bIdx.lowerBound < aIdx.lowerBound)
-        // [top] untouched, result re-parses
         #expect(out.hasPrefix("[top]\nk = 1"))
         #expect(try Toml.Annotated(parsing: out).render() == out)
     }
@@ -95,7 +90,6 @@ import Foundation
     }
 
     @Test func reorderPreservesSurroundingBlocks() throws {
-        // A std table before and after the AoT must be untouched.
         let src = """
         [top]
         k = 1
@@ -113,7 +107,6 @@ import Foundation
         let out = doc.reorderingArrayOfTables(at: ["r"], [1, 0]).render()
         #expect(out.contains("[top]\nk = 1"))
         #expect(out.contains("[bottom]\nz = 9"))
-        // re-parses and the bodies swapped
         let doc2 = try Toml.Annotated(parsing: out)
         let rs = doc2.arrayOfTables(at: ["r"])
         #expect(rs.count == 2)
@@ -143,19 +136,15 @@ import Foundation
         #expect(out == "[a]\nx = 1\n\n")
     }
 
-    // MARK: - Set a value in place (v2.1.0)
+    // MARK: - Set a value in place
 
     @Test func setValuePreservesFormatting() throws {
-        // Indent, `=` spacing, the inline comment and the terminator all
-        // survive — only the value token is replaced (the crux of facet's
-        // config auto-persist).
         let src = "[[r]]\n  name  =  \"a\"   # keep\n"
         let doc = try Toml.Annotated(parsing: src)
         let out = doc.settingValue(.string("z"), atArrayOfTablesElement: ["r"],
                                    ordinal: 0, forKey: "name").render()
         #expect(out == "[[r]]\n  name  =  \"z\"   # keep\n")
         #expect(try Toml.Annotated(parsing: out).render() == out)
-        // A type change re-encodes the token, same formatting contract.
         let out2 = doc.settingValue(.int(5), atArrayOfTablesElement: ["r"],
                                     ordinal: 0, forKey: "name").render()
         #expect(out2 == "[[r]]\n  name  =  5   # keep\n")
@@ -170,15 +159,14 @@ import Foundation
                                  ordinal: 3, forKey: "x").render() == src)      // ordinal miss
         #expect(doc.settingValue(.int(9), atArrayOfTablesElement: ["nope"],
                                  ordinal: 0, forKey: "x").render() == src)      // no such AoT
-        // `key` is ONE literal segment — it never matches a dotted entry
-        // (`a.b = 2` is the path ["a","b"], not the key "a.b").
         #expect(doc.settingValue(.int(9), atArrayOfTablesElement: ["r"],
-                                 ordinal: 0, forKey: "a.b").render() == src)
+                                 ordinal: 0, forKey: "a.b").render() == src)    // `key` is one literal segment, not a path
     }
 
     @Test func setValueDupKeyEditsFirst() throws {
-        // Duplicate keys are invalid TOML but the lossless DOM tiles them;
-        // set targets the FIRST match (mirrors `Body.entry(forKey:)`).
+        // Duplicate keys are invalid TOML, but the lossless DOM tiles them,
+        // so the op must pick one deterministically: the FIRST match, the
+        // same choice `Body.entry(forKey:)` makes.
         let src = "[[r]]\nx = 1\nx = 2\n"
         let doc = try Toml.Annotated(parsing: src)
         let out = doc.settingValue(.int(9), atArrayOfTablesElement: ["r"],
@@ -195,9 +183,8 @@ import Foundation
     }
 
     @Test func setValueCollapsesMultilineArrayKeepsTailComment() throws {
-        // Replacing a multi-line array rewrites the whole value span (interior
-        // comments belong to the OLD value and go with it); the comment after
-        // the last content survives.
+        // Interior comments belong to the OLD value and go with it; only the
+        // comment after the last content token survives.
         let src = "[[r]]\nxs = [ 1, # one\n  2 ]   # tail\n"
         let doc = try Toml.Annotated(parsing: src)
         let out = doc.settingValue(.array([.int(9)]), atArrayOfTablesElement: ["r"],
@@ -207,11 +194,10 @@ import Foundation
     }
 
     @Test func setIsolateMatchOnFacetSectionsFixture() throws {
-        // The real facet shape: an isolate desktop's `match` lives DIRECTLY on
-        // the [desktop.N] table (a section is a plain workspace and never
-        // carries one). Rewrite it in place; every other byte of the file is
-        // untouched — quoting style of the VALUE is the one thing that changes
-        // (encode always emits a basic string).
+        // The real facet shape: an isolate desktop's `match` lives DIRECTLY
+        // on the `[desktop.N]` table, never on a section. The value's quoting
+        // style is the one thing allowed to change (encode always emits a
+        // basic string).
         let src = try fixture("facet.sections")
         let doc = try Toml.Annotated(parsing: src)
         let out = doc.settingValue(.string("app=Safari"),
@@ -226,17 +212,14 @@ import Foundation
     }
 
     @Test func setLayoutOnNamedWorkspaceFixture() throws {
-        // The AoT twin on the same real file: facet rewrites a section's
-        // `layout` in place (ConfigSnapshot's auto-persist). Only that value
-        // token moves — the sibling `label`, the [desktop.2] table's own
-        // `layout = "bsp"`, and every comment stay verbatim.
         let src = try fixture("facet.sections")
         let doc = try Toml.Annotated(parsing: src)
         let out = doc.settingValue(.string("stack"),
                                    atArrayOfTablesElement: ["desktop", "1", "section"],
                                    ordinal: 0, forKey: "layout").render()
-        // Anchored on the label+layout run: bare `layout = "bsp"` also matches
-        // the isolate table, and replacingOccurrences rewrites EVERY hit.
+        // Anchored on the label+layout run: a bare `layout = "bsp"` also
+        // matches the isolate table, and replacingOccurrences rewrites EVERY
+        // hit.
         let anchor = "label = \"Main\"\nlayout = \"bsp\"\n"
         #expect(src.components(separatedBy: anchor).count - 1 == 1,
                 "anchor must hit the fixture exactly once, or the assertion is vacuous")
@@ -246,7 +229,7 @@ import Foundation
         #expect(try Toml.Annotated(parsing: out).render() == out)
     }
 
-    // MARK: - Upsert a value (v2.1.0)
+    // MARK: - Upsert a value
 
     @Test func upsertExistingKeySetsInPlace() throws {
         let src = "[[r]]\nname = \"a\"\n"
@@ -257,9 +240,6 @@ import Foundation
     }
 
     @Test func upsertMissingKeyAppendsInheritingSiblingStyle() throws {
-        // The new entry lands after the element's last entry — BEFORE the
-        // blank-line separator (the body's trailing) — inheriting the
-        // sibling's indent and terminator.
         let src = "[[r]]\n  a = 1\n\n[[r]]\n  b = 2\n"
         let doc = try Toml.Annotated(parsing: src)
         let out = doc.upsertingValue(.string("x"), inArrayOfTablesElement: ["r"],
@@ -277,9 +257,7 @@ import Foundation
     }
 
     @Test func upsertNormalizesMissingFinalNewline() throws {
-        // A final entry with no terminator (EOF) gets one added so the new
-        // entry starts on its own line — the ONE case where a neighbouring
-        // byte changes.
+        // The ONE case where a neighbouring byte changes.
         let src = "[[r]]\nx = 1"
         let doc = try Toml.Annotated(parsing: src)
         let out = doc.upsertingValue(.string("z"), inArrayOfTablesElement: ["r"],
@@ -288,9 +266,9 @@ import Foundation
     }
 
     @Test func upsertAppendKeepsCRLFWithoutBlankLine() throws {
-        // "\r\n" folds into ONE Character in Swift — the missing-terminator
-        // check must be scalar-level or a CRLF sibling gains a spurious
-        // second terminator (blank line + neighbour bytes mutated).
+        // "\r\n" folds into ONE Character in Swift: a Character-level
+        // missing-terminator check would give a CRLF sibling a spurious
+        // second terminator.
         let src = "[[r]]\r\na = 1\r\n"
         let doc = try Toml.Annotated(parsing: src)
         let out = doc.upsertingValue(.string("x"), inArrayOfTablesElement: ["r"],
@@ -299,8 +277,8 @@ import Foundation
     }
 
     @Test func upsertRefusesDottedSiblingCollision() throws {
-        // `sub.x = 1` defines `sub` as a dotted-key table; appending `sub = …`
-        // would render invalid TOML (duplicate key) → no-op.
+        // `sub.x = 1` makes `sub` a dotted-key table; `sub = …` would be a
+        // duplicate key.
         let src = "[[r]]\nsub.x = 1\n"
         let doc = try Toml.Annotated(parsing: src)
         #expect(doc.upsertingValue(.int(9), inArrayOfTablesElement: ["r"],
@@ -308,8 +286,7 @@ import Foundation
     }
 
     @Test func upsertRefusesOwnedSubBlockCollision() throws {
-        // The element owns a `[r.sub]` block; appending `sub = …` to the
-        // element body would render invalid TOML (`sub` is a table) → no-op.
+        // The element owns a `[r.sub]` block, so `sub` is already a table.
         let src = "[[r]]\na = 1\n\n[r.sub]\nz = 1\n"
         let doc = try Toml.Annotated(parsing: src)
         #expect(doc.upsertingValue(.int(9), inArrayOfTablesElement: ["r"],
@@ -326,9 +303,8 @@ import Foundation
     }
 
     @Test func upsertLabelIntoUnnamedWorkspaceFixture() throws {
-        // facet's use-case: name an unnamed workspace section from the GUI —
-        // `label` is upserted into the element that has none (the fixture
-        // pins that cell at ordinal 1).
+        // facet's use-case: name an unnamed workspace section from the GUI.
+        // The fixture keeps its unlabeled section at ordinal 1.
         let src = try fixture("facet.sections")
         let doc = try Toml.Annotated(parsing: src)
         let out = doc.upsertingValue(.string("Dev"),
@@ -342,7 +318,7 @@ import Foundation
         #expect(try Toml.Annotated(parsing: out).render() == out)
     }
 
-    // MARK: - Set an array value at a std table (v2.1.0)
+    // MARK: - Set an array value at a std table
 
     @Test func setArrayValueReplacesExistingKeepingComment() throws {
         let src = "[tags]\ndefined = [\"a\"] # keep\n"
@@ -361,8 +337,6 @@ import Foundation
     }
 
     @Test func setArrayValueCreatesTableAtEnd() throws {
-        // No `[tags]` anywhere → a new block is appended: one separator blank
-        // (the block's leading), a newline-terminated header, the entry.
         let src = "x = 1\n\n[z]\ny = 2\n"
         let doc = try Toml.Annotated(parsing: src)
         let out = doc.settingArrayValue([.string("a")],
@@ -375,11 +349,9 @@ import Foundation
     }
 
     @Test func setArrayValueCreatesTableInEmptyDoc() throws {
-        // Empty document → no separator blank; empty array renders as `[]`.
         let out = try Toml.Annotated(parsing: "")
             .settingArrayValue([], atTable: ["tags"], forKey: "defined").render()
         #expect(out == "[tags]\ndefined = []\n")
-        // A path segment that needs quoting goes through encodeKey.
         let out2 = try Toml.Annotated(parsing: "")
             .settingArrayValue([], atTable: ["a.b"], forKey: "k").render()
         #expect(out2 == "[\"a.b\"]\nk = []\n")
@@ -400,16 +372,14 @@ import Foundation
     }
 
     @Test func setArrayValueRefusesAoTCollision() throws {
-        // `path` already exists as an ARRAY-of-tables — creating a `[path]`
-        // std table would render invalid TOML (redefinition), so the op is a
-        // no-op (the mandate: never emit invalid TOML from a valid doc).
+        // A `[tags]` header after `[[tags]]` is a redefinition.
         let src = "[[tags]]\nname = \"a\"\n"
         let doc = try Toml.Annotated(parsing: src)
         #expect(doc.settingArrayValue([.int(1)], atTable: ["tags"],
                                       forKey: "defined").render() == src)
-        // A path whose PREFIX is an AoT is refused too: a `[a.b]` header
-        // would bind inside the LAST `[[a]]` element, not at root — never
-        // what the caller meant.
+        // An AoT PREFIX is refused too: a `[a.b]` header would be VALID TOML
+        // but bind inside the LAST `[[a]]` element, never what the caller
+        // meant.
         let src2 = "[[a]]\nx = 1\n"
         let doc2 = try Toml.Annotated(parsing: src2)
         #expect(doc2.settingArrayValue([.int(1)], atTable: ["a", "b"],
@@ -417,9 +387,8 @@ import Foundation
     }
 
     @Test func setArrayValueRefusesKeyDefinedPathCollisions() throws {
-        // Creating a `[path]` header where any segment of `path` is already
-        // KEY-defined (a scalar, an inline table, or a dotted key — all
-        // closed to headers) would render invalid TOML → no-op.
+        // A scalar, an inline table and a dotted-key table are all closed to
+        // a later header (TOML 1.0).
         for (src, path) in [
             ("tags = 1\n",                 ["tags"]),            // scalar
             ("tags = { x = 1 }\n",         ["tags"]),            // inline table
@@ -435,10 +404,6 @@ import Foundation
     }
 
     @Test func setArrayValueRefusesKeyCollisionsInExistingTable() throws {
-        // The table exists but `key` is already defined there another way —
-        // a dotted entry (`defined.inner = …`) or a sub-table header
-        // (`[tags.defined]`). Appending `defined = […]` would render invalid
-        // TOML → no-op.
         let dotted = "[tags]\ndefined.inner = 1\n"
         let doc1 = try Toml.Annotated(parsing: dotted)
         #expect(doc1.settingArrayValue([.string("z")], atTable: ["tags"],
@@ -450,8 +415,8 @@ import Foundation
     }
 
     @Test func setArrayValueCreateKeepsCRLFDocEnd() throws {
-        // A CRLF-terminated document already ends with a newline — the
-        // normalization must not add a stray LF (scalar-level check).
+        // A Character-level "ends with \n" check would miss the CRLF and add
+        // a stray LF.
         let src = "x = 1\r\n"
         let doc = try Toml.Annotated(parsing: src)
         let out = doc.settingArrayValue([.string("a")],
@@ -459,12 +424,11 @@ import Foundation
         #expect(out == "x = 1\r\n\n[tags]\ndefined = [\"a\"]\n")
     }
 
-    // MARK: - Set a scalar value at a std table (v2.3.0)
+    // MARK: - Set a scalar value at a std table
 
     @Test func setValueReplacesExistingKeepingComment() throws {
-        // Only the value token moves; the same-line comment, indent and `=`
-        // spacing stay verbatim. A literal-string old value becomes a basic
-        // string (the documented `Toml.encode` spelling).
+        // A literal-string old value becomes a basic string — the documented
+        // `Toml.encode` spelling.
         let src = "[desktop.2]\ntype = \"isolate\"\nmatch = 'app=Safari' # keep\n"
         let doc = try Toml.Annotated(parsing: src)
         let out = doc.settingValue(.string("app~=Code"),
@@ -473,8 +437,8 @@ import Foundation
     }
 
     @Test func setValueAppendsToExistingTable() throws {
-        // The facet t-sgqk shape: an isolate-desktop table whose config never
-        // spelled `match` gets one appended after the last entry.
+        // facet's shape: an isolate-desktop table whose config never spelled
+        // `match`.
         let src = "[desktop.2]\ntype = \"isolate\"\n"
         let doc = try Toml.Annotated(parsing: src)
         let out = doc.settingValue(.string("app~=Chrome"),
@@ -499,13 +463,10 @@ import Foundation
     }
 
     @Test func setValueRefusesKeyCollisions() throws {
-        // A dotted sibling (`match.x`) already defines `match` as a
-        // dotted-key table — appending `match = …` would be invalid TOML.
         let src = "[desktop.2]\nmatch.x = 1\n"
         let doc = try Toml.Annotated(parsing: src)
         #expect(doc.settingValue(.string("v"), atTable: ["desktop", "2"],
                                  forKey: "match").render() == src)
-        // A sub-block `[desktop.2.match]` claims the key the same way.
         let src2 = "[desktop.2]\ntype = \"isolate\"\n\n[desktop.2.match]\nx = 1\n"
         let doc2 = try Toml.Annotated(parsing: src2)
         #expect(doc2.settingValue(.string("v"), atTable: ["desktop", "2"],
@@ -513,8 +474,6 @@ import Foundation
     }
 
     @Test func setValueLeavesOtherBlocksByteIdentical() throws {
-        // Editing one table's value leaves every other block — comments,
-        // blank lines, the AoT sections — byte-for-byte untouched.
         let src = """
         # banner
 
@@ -546,21 +505,16 @@ import Foundation
         #expect(before[0].body.entry(forKey: "name")?.value == .string("close tab"))
         #expect(before[3].body.entry(forKey: "name")?.value == .string("minimize"))
 
-        // Reverse the four rules.
         let doc2 = doc.reorderingArrayOfTables(at: path, [3, 2, 1, 0])
         let after = doc2.arrayOfTables(at: path)
         #expect(after.map { $0.body.entry(forKey: "name")?.value } == [
             .string("minimize"), .string("close window"),
             .string("reopen tab"), .string("close tab"),
         ])
-        // The result re-parses and is itself round-trip stable.
         let reparsed = try Toml.Annotated(parsing: doc2.render())
         #expect(reparsed.render() == doc2.render())
-        // Everything outside the rule run is unchanged: the file still has its
-        // schema pragma and the same number of blocks.
-        #expect(doc2.leading == doc.leading)
+        #expect(doc2.leading == doc.leading)          // the schema pragma never moves
         #expect(doc2.blocks.count == doc.blocks.count)
-        // An identity reorder leaves the whole file byte-identical.
         #expect(doc.reorderingArrayOfTables(at: path, [0, 1, 2, 3]).render()
                 == doc.render())
     }

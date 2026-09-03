@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Run the official toml-test conformance suite against our decoder (and, once it
-# exists, encoder), pinned to TOML 1.0.0.
+# Run the official toml-test conformance suite against the decoder and encoder,
+# pinned to TOML 1.0.0.
 #
 # The toml-test runner is a Go program that EMBEDS the corpus, so there is
 # nothing to vendor — install it once and run. CI does the same (see ci.yml).

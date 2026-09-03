@@ -1,42 +1,38 @@
-// Functional edit ops — the minimal set the family needs (brief Q3): reorder
-// and delete array-of-tables elements, plus delete a std table. Each returns a
-// NEW document (value semantics); the receiver is unchanged. These are the
-// "first real need": editing the AoT blocks behind wand's tome export (#130)
-// and facet's drag-and-drop, writing the result back with formatting intact.
+// Functional edit ops — the minimal set the family needs: reorder / delete
+// array-of-tables elements, delete a std table, and surgical VALUE writes
+// (`settingValue` / `upsertingValue` on one `[[path]]` element,
+// `settingValue` / `settingArrayValue` under a `[path]` table). Each returns
+// a NEW document; the receiver is unchanged. A value write rewrites only the
+// value token inside one entry's `raw` (spelled by `Toml.encode`), so
+// comments / indent / spacing stay byte-verbatim.
 //
-// v2.1.0 adds the per-element VALUE ops — `settingValue` / `upsertingValue`
-// on one `[[path]]` element and `settingArrayValue` under a `[path]` table —
-// the surgical writes facet's config auto-persistence needs (t-12az): only
-// the value token inside one entry's `raw` is rewritten (via `Toml.encode`),
-// so comments / indent / spacing stay byte-verbatim. v2.3.0 adds the scalar
-// twin `settingValue(_:atTable:forKey:)` for a single `[path]` table entry
-// (facet's isolate-desktop `[desktop.N] match`, t-sgqk) — same engine, same
-// guards. Still out of scope: from-scratch emit, and APPENDING a whole new
-// `[[path]]` element (facet skips + logs that case).
+// Out of scope on purpose — do not add: from-scratch emit, and APPENDING a
+// whole new `[[path]]` element (facet skips + logs that case). Every op is a
+// no-op rather than a best effort whenever the result could be invalid TOML:
+// a valid document must never render invalid.
 //
-// Trivia on edit (the wand#129 rule): an element moves/deletes WHOLE — its
-// banner comment travels with it (so a per-element comment never labels the
-// wrong element), while blank-line SEPARATORS stay with the preceding block
-// (they are parsed as its `body.trailing`), so spacing stays uniform.
-// Caveats (cosmetic, and matching Rust toml_edit): a banner above the
-// document's FIRST content token lives in the never-moving document `leading`,
-// so it does not travel; and because there are N−1 separators between N
-// elements, the element that lands LAST may gain/lose a trailing blank.
-// Identity permutations are byte-stable. ASSUMES newline-terminated lines —
-// true for every hand-edited family config (all end in `\n`); moving a final
-// line that lacks a trailing newline to a non-final slot would need one added
-// (unimplemented — no consumer produces that input).
+// Trivia on edit (the wand#129 rule): an element moves / deletes WHOLE — its
+// banner comment travels with it so a per-element comment never labels the
+// wrong element — while blank-line SEPARATORS stay with the preceding block
+// (parsed as its `body.trailing`), so spacing stays uniform. Cosmetic limits,
+// matching Rust toml_edit: a banner above the document's FIRST content token
+// lives in the never-moving document `leading` and does not travel; with N−1
+// separators between N elements, the element that lands LAST may gain or
+// lose a trailing blank. Identity permutations are byte-stable.
+//
+// ASSUMES newline-terminated lines: moving a final line that lacks a trailing
+// newline to a non-final slot would need one added — unimplemented, because
+// every hand-edited family config ends in `\n`.
 
 public extension Toml.Annotated {
 
-    /// The array-of-tables elements at `path`, in document order (each is the
-    /// `[[path]]` block — read `block.body` to inspect an element's fields,
-    /// e.g. to decide a new order). Empty if there is no such array-of-tables.
+    /// The `[[path]]` element blocks in document order — the header blocks
+    /// only, not the sub-table blocks each element owns (see
+    /// `blockRangesOfArrayOfTables`). Empty if there is no such array.
     func arrayOfTables(at path: [String]) -> [Block] {
         blockIndices(ofArrayOfTablesAt: path).map { blocks[$0] }
     }
 
-    /// Number of `[[path]]` elements.
     func arrayOfTablesCount(at path: [String]) -> Int {
         blockIndices(ofArrayOfTablesAt: path).count
     }
@@ -44,22 +40,17 @@ public extension Toml.Annotated {
     /// Reorder the array-of-tables elements at `path`. `order` is a
     /// permutation of `0..<count`: the element currently at ordinal
     /// `order[k]` becomes the new ordinal `k`. Each element moves WHOLE —
-    /// its `[[path]]` header, its body, its banner comment, AND any sub-table
-    /// blocks it owns (`[path.sub]`, `[[path.sub]]`, …) travel together — so an
-    /// element's nested tables stay bound to it. The elements' positions
-    /// relative to unrelated blocks are preserved. An invalid permutation is a
-    /// no-op — as is a path whose element ownership is non-contiguous (an
-    /// unrelated block sits between an element's header and a sub-table it
-    /// owns), where a clean move is impossible without stranding that
-    /// sub-table (see `arrayOfTablesOwnershipIsContiguous`).
+    /// header, body, banner comment AND the sub-table blocks it owns
+    /// (`[path.sub]`, `[[path.sub]]`, …) — so its nested tables stay bound to
+    /// it. Unrelated blocks between elements keep their positions. An invalid
+    /// permutation is a no-op, as is non-contiguous element ownership (see
+    /// `arrayOfTablesOwnershipIsContiguous`).
     func reorderingArrayOfTables(at path: [String], _ order: [Int]) -> Self {
         guard arrayOfTablesOwnershipIsContiguous(at: path) else { return self }
         let ranges = blockRangesOfArrayOfTables(at: path)
         let n = ranges.count
         guard order.count == n, Set(order) == Set(0..<n) else { return self }
         let elements = ranges.map { Array(blocks[$0]) }
-        // Rebuild: emit the permuted element slice at each element's original
-        // start, keeping any unrelated blocks between elements in place.
         var newBlocks: [Block] = []
         var k = 0
         var idx = 0
@@ -78,13 +69,11 @@ public extension Toml.Annotated {
         return copy
     }
 
-    /// Remove the array-of-tables element at `ordinal` (0-based) under `path`.
-    /// The WHOLE element — its `[[path]]` header, body, attached leading
-    /// trivia, AND any sub-table blocks it owns — is removed (otherwise an
-    /// orphaned `[path.sub]` would re-bind to the wrong element or fail to
-    /// parse). An out-of-range ordinal is a no-op — as is a path whose element
-    /// ownership is non-contiguous (see `arrayOfTablesOwnershipIsContiguous`),
-    /// where removing the contiguous slice would strand an owned sub-table.
+    /// Remove the array-of-tables element at `ordinal` (0-based) under `path`,
+    /// WHOLE — header, body, banner AND the sub-table blocks it owns;
+    /// otherwise an orphaned `[path.sub]` would re-bind to the wrong element
+    /// or fail to parse. An out-of-range ordinal is a no-op, as is
+    /// non-contiguous ownership (see `arrayOfTablesOwnershipIsContiguous`).
     func removingArrayOfTablesElement(at path: [String], ordinal: Int) -> Self {
         guard arrayOfTablesOwnershipIsContiguous(at: path) else { return self }
         let ranges = blockRangesOfArrayOfTables(at: path)
@@ -94,10 +83,9 @@ public extension Toml.Annotated {
         return copy
     }
 
-    /// Remove the first `[table]` (std-table) block at `path`, with its
-    /// attached leading trivia. A no-op if there is no such table. (Sub-tables
-    /// `[path.sub]` are left in place; they remain valid, re-rooting `path` as
-    /// an implicit super-table.)
+    /// Remove the first `[path]` std-table block with its banner. No-op if
+    /// absent. Sub-tables `[path.sub]` are left in place on purpose: they
+    /// stay valid, re-rooting `path` as an implicit super-table.
     func removingTable(at path: [String]) -> Self {
         guard let i = blocks.firstIndex(where: { $0.kind == .table && $0.path == path })
         else { return self }
@@ -110,11 +98,10 @@ public extension Toml.Annotated {
     /// `ordinal` is 0-based document order; `key` is ONE literal key segment
     /// (NOT dotted-path syntax — a dotted entry `a.b = …` is never matched;
     /// the first duplicate wins, mirroring `Body.entry(forKey:)`). Only the
-    /// value token inside the entry's `raw` is replaced: indent, key
-    /// spelling, `=` spacing, the same-line comment and the terminator stay
-    /// verbatim. The new value is spelled by `Toml.encode` — a string always
-    /// becomes a basic string, whatever the old quoting style. A missing
-    /// element / key is a no-op.
+    /// value token is replaced — indent, key spelling, `=` spacing, the
+    /// same-line comment and the terminator stay verbatim. The new value is
+    /// spelled by `Toml.encode`, so a string always becomes a basic string
+    /// whatever the old quoting style. A missing element / key is a no-op.
     func settingValue(_ value: Toml.Value, atArrayOfTablesElement path: [String],
                       ordinal: Int, forKey key: String) -> Self {
         let heads = blockIndices(ofArrayOfTablesAt: path)
@@ -130,13 +117,12 @@ public extension Toml.Annotated {
 
     /// Set-or-insert: like `settingValue(_:atArrayOfTablesElement:…)`, but a
     /// missing `key` is APPENDED after the element's last entry (before any
-    /// trailing trivia), inheriting that sibling's indent + line terminator
-    /// (facet: give an unnamed workspace section a `label`). A final sibling
-    /// lacking a terminator gets one added — the one neighbouring byte an
-    /// edit may touch. No-ops, never invalid TOML: a missing element
-    /// (appending a whole new `[[path]]` element is out of scope, v2.1.0),
-    /// and a `key` already defined another way — by a dotted sibling
-    /// (`key.x = …`) or a sub-block the element owns (`[path.key]`).
+    /// trailing trivia), inheriting that sibling's indent + line terminator.
+    /// A final sibling lacking a terminator gets one added — the one
+    /// neighbouring byte an edit may touch. No-ops, never invalid TOML: a
+    /// missing element (no element append — see the file head), and a `key`
+    /// already defined another way — by a dotted sibling (`key.x = …`) or a
+    /// sub-block the element owns (`[path.key]`).
     func upsertingValue(_ value: Toml.Value, inArrayOfTablesElement path: [String],
                         ordinal: Int, forKey key: String) -> Self {
         let ranges = blockRangesOfArrayOfTables(at: path)
@@ -159,46 +145,40 @@ public extension Toml.Annotated {
         return copy
     }
 
-    /// Set-or-insert `key = [elements]` under the FIRST `[path]` std table —
-    /// facet's `[tags] defined = […]`. Same in-place / append semantics as
-    /// `upsertingValue`; when no such table exists at all, a NEW block is
-    /// created at the document end: one blank separator line (the block's
-    /// `leading` — omitted in an empty document), a newline-terminated
-    /// header, then the entry. No-ops, never invalid TOML: an empty `path`;
-    /// a `key` already defined another way in the table (dotted entry /
-    /// `[path.key]` sub-block); and — on the create path — a `path` that
-    /// collides with an existing definition (an array-of-tables at any
-    /// prefix, or a key-defined node a header cannot redefine or extend).
+    /// Set-or-insert `key = [elements]` under the FIRST `[path]` std table.
+    /// Same in-place / append semantics as `upsertingValue`; when no such
+    /// table exists at all, a NEW block is created at the document end: one
+    /// blank separator line (the block's `leading` — omitted in an empty
+    /// document), a newline-terminated header, then the entry. No-ops, never
+    /// invalid TOML: an empty `path`; a `key` already defined another way in
+    /// the table (dotted entry / `[path.key]` sub-block); and — on the create
+    /// path — a `path` that collides with an existing definition (an
+    /// array-of-tables at any prefix, or a key-defined node a header cannot
+    /// redefine or extend).
     func settingArrayValue(_ elements: [Toml.Value], atTable path: [String],
                            forKey key: String) -> Self {
         settingToken(Toml.encode(.array(elements)), atTable: path, forKey: key)
     }
 
-    /// Set-or-insert `key = value` (one SCALAR entry) under the FIRST `[path]`
-    /// std table — the scalar twin of `settingArrayValue`, and the write facet's
-    /// config auto-persistence needs for an isolate desktop's live-retargeted
-    /// `[desktop.N] match = "…"` (t-sgqk; `[desktop.N]` is a SINGLE table, so
-    /// the AoT-element ops can't reach it). Identical semantics + no-op guards;
-    /// the value is spelled by `Toml.encode`, so a string always becomes a
-    /// basic string, whatever the old quoting style.
+    /// The scalar twin of `settingArrayValue` — same semantics, same no-op
+    /// guards. It exists because a single `[path]` table (facet's
+    /// `[desktop.N]`) is unreachable by the AoT-element ops.
     func settingValue(_ value: Toml.Value, atTable path: [String],
                       forKey key: String) -> Self {
         settingToken(Toml.encode(value), atTable: path, forKey: key)
     }
 
-    /// Indices into `blocks` of the array-of-tables ELEMENT HEADERS at `path`,
-    /// in document order. (Use `blockRangesOfArrayOfTables` to get each
-    /// element's full owned span, header + sub-tables.)
+    /// Indices into `blocks` of the `[[path]]` element HEADERS, in document
+    /// order — not the owned spans (`blockRangesOfArrayOfTables`).
     func blockIndices(ofArrayOfTablesAt path: [String]) -> [Int] {
         blocks.indices.filter { blocks[$0].kind == .arrayElement && blocks[$0].path == path }
     }
 
-    /// The contiguous block range each `[[path]]` element OWNS, in document
-    /// order: its header block plus every following block whose header path is a
-    /// strict descendant of `path` (e.g. `[path.physical]`, `[[path.variety]]`),
-    /// up to the next sibling `[[path]]` element or any header that leaves the
-    /// subtree. This is the unit reorder/delete moves so nested tables stay
-    /// bound to their element.
+    /// The contiguous block range each `[[path]]` element OWNS: its header
+    /// plus every following block whose path is a strict descendant of `path`
+    /// (`[path.physical]`, `[[path.variety]]`, …), up to the next sibling
+    /// element or any header that leaves the subtree. This is the unit
+    /// reorder / delete moves, so nested tables stay bound to their element.
     func blockRangesOfArrayOfTables(at path: [String]) -> [Range<Int>] {
         let starts = blockIndices(ofArrayOfTablesAt: path)
         func isDescendant(_ b: Block) -> Bool {
@@ -214,21 +194,17 @@ public extension Toml.Annotated {
         return ranges
     }
 
-    /// Whether every block that is a strict descendant of the array-of-tables
-    /// at `path` (a sub-table `[path.x]` / `[[path.x]]` / deeper that an element
-    /// owns) sits INSIDE one of the contiguous element ranges. It is false when
-    /// an unrelated block is interleaved between an element's header and a
-    /// sub-table it owns: TOML binds that sub-table to the element by
-    /// most-recent-definition regardless of the intervening block, but the
-    /// element's owned span (`blockRangesOfArrayOfTables`) is a contiguous run
-    /// that stops at the unrelated block — so a structural move (reorder /
-    /// remove) would leave the sub-table behind, re-binding it to the wrong
-    /// element (invalid TOML or silent corruption). The structural ops no-op
-    /// when this is false rather than risk that; a plain edit / value write is
-    /// unaffected. (Sub-tables placed immediately after their header — every
-    /// real family config — are contiguous, so this never fires in practice.)
-    /// Internal: an implementation detail of the reorder/remove no-op guard,
-    /// not part of the public edit API.
+    /// Whether every strict descendant block of the array-of-tables at `path`
+    /// sits INSIDE one of the contiguous element ranges. False when an
+    /// unrelated block is interleaved between an element's header and a
+    /// sub-table it owns: TOML still binds that sub-table to the element by
+    /// most-recent-definition, but the owned span
+    /// (`blockRangesOfArrayOfTables`) stops at the unrelated block, so a
+    /// structural move would leave the sub-table behind and re-bind it to the
+    /// wrong element. Reorder / remove no-op in that case rather than risk
+    /// silent corruption; value writes are unaffected. Every real family
+    /// config places sub-tables directly after their header, so this never
+    /// fires in practice.
     internal func arrayOfTablesOwnershipIsContiguous(at path: [String]) -> Bool {
         let ranges = blockRangesOfArrayOfTables(at: path)
         guard !ranges.isEmpty else { return true }
@@ -241,16 +217,13 @@ public extension Toml.Annotated {
     }
 }
 
-// MARK: - Private raw-surgery helpers (the v2.1.0 value ops)
+// MARK: - Private raw-surgery helpers
 
 private extension Toml.Annotated {
 
-    /// The shared set-or-insert engine behind `settingValue(_:atTable:forKey:)`
-    /// and `settingArrayValue(_:atTable:forKey:)` — `token` is the value
-    /// already spelled by `Toml.encode`. In-place value-token surgery when
-    /// `key` exists in the FIRST `[path]` table; append when the table exists
-    /// without it; a NEW `[path]` block at the document end when no such table
-    /// exists — with the no-op guards both public docs describe.
+    /// The shared set-or-insert engine behind the two `atTable:` ops; `token`
+    /// is already spelled by `Toml.encode`. The contract, including every
+    /// no-op guard, is documented on `settingArrayValue`.
     func settingToken(_ token: String, atTable path: [String],
                       forKey key: String) -> Self {
         guard !path.isEmpty else { return self }
@@ -269,21 +242,16 @@ private extension Toml.Annotated {
             }
             return copy
         }
-        // No `[path]` anywhere → append a new std-table block at the end —
-        // unless the header would redefine or extend an existing definition
-        // (invalid TOML, or an AoT-bound header), OR the appended `key` would
-        // collide with an existing CHILD block at `path.key` (a `[[path.key]]`
-        // / `[path.key]` / deeper block that exists even though no `[path]`
-        // header does): the created `key = …` then duplicates that child.
-        // Either renders invalid TOML, so no-op instead.
+        // Create path. The second guard matters even though no `[path]` header
+        // exists: a `[[path.key]]` / `[path.key]` / deeper block can still be
+        // present, and the created `key = …` would duplicate that child.
         guard !Self.headerCollides(path: path, root: root, blocks: blocks),
               !Self.appendCollides(key: key, body: Body(), basePath: path, subBlocks: blocks[...])
         else { return self }
         let rendered = render()
         if !rendered.isEmpty && rendered.unicodeScalars.last != "\n" {
-            // The document's final line has no terminator — add one so the
-            // new header starts on its own line. (Scalar-level check: a CRLF
-            // end folds into one Character, so hasSuffix("\n") would misfire.)
+            // Scalar-level check: a CRLF end folds into one Character, so
+            // hasSuffix("\n") would misfire and add a stray LF.
             if copy.blocks.isEmpty { copy.root.trailing += "\n" }
             else { copy.blocks[copy.blocks.count - 1].body.trailing += "\n" }
         }
@@ -297,25 +265,23 @@ private extension Toml.Annotated {
     }
 
     /// Replace ONLY the value token inside `entry.raw` — the crux of the set
-    /// ops. The assignment `=` is found with the same string-aware scan the
-    /// parser uses (`lexFindEq` — a `#` never precedes it in a valid entry);
-    /// the value span runs from the first non-space/tab after it to the END
-    /// of the last content token (strings scanned whole via `lexScanQuoted`,
-    /// `#` comments and whitespace never extend it). Everything before and
-    /// after the span — indent, key spelling, `=` spacing, the same-line
-    /// comment, the terminator — is re-emitted verbatim. Interior comments of
-    /// a multi-line value sit INSIDE the span, so they are replaced with the
-    /// old value; the comment after the last content survives.
+    /// ops. The value span runs from the first non-space/tab after the `=`
+    /// (found with the parser's own string-aware `lexFindEq`, so the two can
+    /// never disagree) to the END of the last content token; strings are
+    /// scanned whole, and `#` comments / whitespace never extend it. Bytes
+    /// outside the span are re-emitted verbatim. Interior comments of a
+    /// multi-line value sit INSIDE the span and go with the old value; the
+    /// comment after the last content survives.
     static func settingRaw(_ entry: Entry, to token: String) -> Entry {
         let a = Array(entry.raw.unicodeScalars)
         guard let eq = Toml.lexFindEq(a) else { return entry }
         var start = eq + 1
         while start < a.count && (a[start] == " " || a[start] == "\t") { start += 1 }
         var i = start
-        var end = start                              // end of the last content token
+        var end = start
         while i < a.count {
             let c = a[i]
-            if c == "#" {                            // comment → never content
+            if c == "#" {
                 while i < a.count && a[i] != "\n" { i += 1 }
                 continue
             }
@@ -336,9 +302,9 @@ private extension Toml.Annotated {
         return e
     }
 
-    /// A fresh `key = token` entry with the given surrounding style. `key`
-    /// is one literal segment, spelled through `encodeKey` (quoted when not
-    /// a bare key); no banner is fabricated (`leading` stays empty).
+    /// A fresh `key = token` entry. `key` is one literal segment, spelled
+    /// through `encodeKey` so a non-bare key is quoted; no banner is
+    /// fabricated.
     static func makeEntry(key: String, valueToken: String,
                           indent: String, newline: String) -> Entry {
         Entry(leading: "",
@@ -346,12 +312,10 @@ private extension Toml.Annotated {
               key: [key], valueText: valueToken)
     }
 
-    /// Append `key = token` after `body`'s last entry — before its trailing
+    /// Append `key = token` after `body`'s last entry — BEFORE its trailing
     /// trivia, so a blank-line separator stays put — inheriting the last
-    /// sibling's indent and line terminator. An empty body uses no indent and
-    /// `fallbackTerminator` (the block header's). A final sibling with no
-    /// terminator (EOF) gets one added first so the new entry starts on its
-    /// own line.
+    /// sibling's indent and line terminator (an empty body uses no indent
+    /// and `fallbackTerminator`, the block header's).
     static func appending(_ body: Body, key: String, token: String,
                           fallbackTerminator: String) -> Body {
         var b = body
@@ -362,9 +326,10 @@ private extension Toml.Annotated {
                 Array(sib.raw.unicodeScalars).prefix { $0 == " " || $0 == "\t" }))
             newline = sib.raw.hasSuffix("\r\n") ? "\r\n" : "\n"
             if sib.raw.unicodeScalars.last != "\n" {
-                // Scalar-level check — "\r\n" folds into ONE Character, so
-                // hasSuffix("\n") would treat a CRLF-terminated sibling as
-                // unterminated and append a spurious blank line.
+                // An unterminated final sibling (EOF) gets a terminator so the
+                // new entry starts on its own line. Scalar-level check: "\r\n"
+                // folds into ONE Character, so hasSuffix("\n") would treat a
+                // CRLF sibling as unterminated and append a spurious blank.
                 b.entries[b.entries.count - 1].raw += newline
             }
         } else {
@@ -376,17 +341,15 @@ private extension Toml.Annotated {
         return b
     }
 
-    /// The line-terminator style of a header line (`\r\n` or `\n`).
     static func terminator(of headerRaw: String) -> String {
         headerRaw.hasSuffix("\r\n") ? "\r\n" : "\n"
     }
 
-    /// Whether appending an entry `key = …` into the body at `basePath`
-    /// would COLLIDE with an existing definition and render invalid TOML:
-    /// a dotted sibling entry (`key.x = …` — `key` is a dotted-key table),
-    /// or a sub-block at `basePath.key` (or deeper) among `subBlocks` —
-    /// pass the element's OWNED block slice for an AoT element (a sub-header
-    /// binds to its most recent element), or all blocks for a std table.
+    /// Whether appending `key = …` into the body at `basePath` would render
+    /// invalid TOML: a dotted sibling (`key.x = …` makes `key` a dotted-key
+    /// table), or a sub-block at `basePath.key` or deeper among `subBlocks`.
+    /// Pass the element's OWNED slice for an AoT element (a sub-header binds
+    /// to its most recent element), or all blocks for a std table.
     static func appendCollides(key: String, body: Body, basePath: [String],
                                subBlocks: ArraySlice<Block>) -> Bool {
         if body.entries.contains(where: { $0.key.first == key }) { return true }
@@ -397,16 +360,15 @@ private extension Toml.Annotated {
         }
     }
 
-    /// Whether creating a `[path]` header would redefine or extend an
-    /// existing definition — i.e. the render would be invalid TOML (or, for
-    /// the AoT-prefix case, valid but bound to the WRONG place):
-    ///   - an array-of-tables at any non-strict prefix of `path` (an exact
+    /// Whether creating a `[path]` header would render invalid TOML, or valid
+    /// TOML bound to the WRONG place:
+    ///   - an array-of-tables at any non-strict prefix of `path` — an exact
     ///     match is a redefinition; a strict prefix means the header would
-    ///     bind inside the AoT's LAST element rather than at root);
-    ///   - a KEY-defined node on `path`: within a scope `base` (the root or
-    ///     a block), an entry whose first key segment is `path`'s next
-    ///     segment after `base` makes that node a scalar / inline table /
-    ///     dotted-key table — all closed to headers.
+    ///     bind inside the AoT's LAST element rather than at root;
+    ///   - a KEY-defined node on `path`: within a scope `base` (root or a
+    ///     block), an entry whose first key segment is `path`'s next segment
+    ///     after `base` makes that node a scalar / inline table / dotted-key
+    ///     table — all closed to headers.
     static func headerCollides(path p: [String], root: Body, blocks: [Block]) -> Bool {
         if blocks.contains(where: {
             $0.kind == .arrayElement && $0.path.count <= p.count

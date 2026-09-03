@@ -2,12 +2,12 @@ import Testing
 import Foundation
 @testable import Toml
 
-// Fast, corpus-independent coverage of the strict typed decoder (`decodeStrict`)
-// + the redefinition machine (`typedTree`) + the tagged-JSON emitter. The
-// authoritative gate is the official toml-test 1.0 conformance CI job (decoder:
-// 205 valid / 474 invalid green); these tests give macOS-side coverage and pin
-// the regression-prone corners (trailing-quote strings, int64 range, the four
-// datetime tags, redefinition rejection, value-is-always-a-JSON-string).
+// Fast, corpus-independent coverage of the strict typed decoder
+// (`decodeStrict`) + the redefinition machine (`typedTree`) + the tagged-JSON
+// emitter. The authoritative gate is the official toml-test 1.0 conformance
+// CI job; these pin the regression-prone corners (trailing-quote strings,
+// int64 range, the four datetime tags, redefinition rejection,
+// value-is-always-a-JSON-string) where `swift test` runs.
 @Suite struct DecodeStrictTests {
 
     private func v(_ s: String) throws -> Toml.TypedValue { try Toml.decodeStrict(s) }
@@ -37,7 +37,6 @@ import Foundation
         #expect(try v("\"\"\"a\\\n   b\"\"\"") == .string("ab"))
     }
     @Test func multilineTrailingQuotes() throws {
-        // """"one quote"""" → "one quote" ; '''' '...'  trailing-quote rule.
         #expect(try v("\"\"\"\"one quote\"\"\"\"") == .string("\"one quote\""))
     }
     @Test func rejectReservedEscapesAndControls() {
@@ -138,10 +137,9 @@ import Foundation
         docRejects("a.b = 0\na = {}\n", "redefine dotted table as inline")
     }
     @Test func redefinitionValidCases() throws {
-        // Out-of-order + implicit-then-explicit is allowed exactly once.
-        _ = try parses("[a.b.c]\nz=9\n[a]\nw=1\n")
+        _ = try parses("[a.b.c]\nz=9\n[a]\nw=1\n")   // implicit-then-explicit, once
         _ = try parses("a.b = 1\na.c = 2\n")        // sibling dotted keys extend `a`
-        _ = try parses("[[f]]\nx=1\n[[f]]\ny=2\n")  // append array elements
+        _ = try parses("[[f]]\nx=1\n[[f]]\ny=2\n")
     }
 
     // MARK: tagged JSON (value is ALWAYS a JSON string)
@@ -150,15 +148,14 @@ import Foundation
         #expect(try v("42").taggedJSON() == #"{"type":"integer","value":"42"}"#)
         #expect(try v("true").taggedJSON() == #"{"type":"bool","value":"true"}"#)
         #expect(try v("1979-05-27").taggedJSON() == #"{"type":"date-local","value":"1979-05-27"}"#)
-        // A table with keys literally named type/value must NOT be confused with
-        // a scalar; it stays a JSON object of tagged scalars.
+        // A table whose keys are literally `type` / `value` must not be
+        // confused with a scalar.
         let t = try parses(#"type = "x""# + "\n" + #"value = 1"# + "\n")
         #expect(t.taggedJSON().contains(#""type":{"type":"string","value":"x"}"#))
     }
 }
 
 private extension Toml.TypedValue {
-    /// The toml-test type tag this value would emit (for datetime-kind checks).
     var jsonTag: String? {
         switch self {
         case .offsetDateTime: return "datetime"

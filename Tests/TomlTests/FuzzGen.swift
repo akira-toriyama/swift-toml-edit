@@ -1,16 +1,15 @@
 import Foundation
 
-// Shared deterministic TOML document generator — extracted from
-// FuzzRoundTripTests so the lossy-derivation suite (ParseWithSpansTests)
-// can fuzz the SAME grammar. It builds many
-// diverse-but-VALID TOML documents, deliberately varying the dimensions where
-// tiler/trivia bugs live (leading/trailing trivia, banner vs separator
-// comments, blank-line runs, indentation, inline comments, LF vs CRLF per
-// line, multi-line strings/arrays, quoted/dotted/numeric keys).
+// Shared deterministic TOML document generator (FuzzRoundTripTests and
+// ParseWithSpansTests fuzz the SAME grammar). It builds diverse-but-VALID
+// documents, deliberately varying the dimensions where tiler / trivia bugs
+// live: leading / trailing trivia, banner vs separator comments, blank-line
+// runs, indentation, inline comments, LF vs CRLF per line, multi-line
+// strings / arrays, quoted / dotted / numeric keys.
 //
-// Deterministic (seeded SplitMix64) so a failure reproduces exactly. The
-// extraction is call-order-preserving: FuzzRoundTripTests' seed produces the
-// same document sequence it did before the move.
+// Deterministic (seeded SplitMix64) so a failure reproduces exactly; the
+// order of `random` calls is part of that contract, so a reordering changes
+// every seed's corpus.
 enum TomlFuzzGen {
 
     struct SplitMix64: RandomNumberGenerator {
@@ -44,21 +43,19 @@ enum TomlFuzzGen {
         case 4: return "\"safe text \(Int.random(in: 0...99, using: &r))\""
         case 5: return "'literal \(Int.random(in: 0...99, using: &r))'"
         case 6: return "1979-05-27T07:32:00Z"
-        case 7: // single-line array
+        case 7:
             let n = Int.random(in: 0...3, using: &r)
             return "[" + (0..<n).map { _ in String(Int.random(in: 0...9, using: &r)) }.joined(separator: ", ") + "]"
         default: return "\"#has = [tricky] chars\""   // exercises comment/bracket scanners
         }
     }
 
-    /// A value that spans physical lines (multi-line array or multi-line string).
     private static func multilineValue(_ r: inout SplitMix64) -> String {
         let term = nl(&r)
         if Bool.random(using: &r) {
-            // multi-line array with an interior comment + trailing comma
             return "[" + term + "  1, # c" + term + "  2," + term + "]"
         } else {
-            // multi-line basic string whose body LOOKS like structure
+            // A string body that LOOKS like structure — the phantom-node trap.
             return "\"\"\"" + term + "[not a header]" + term + "k = 1 # not a comment" + term + "\"\"\""
         }
     }
@@ -66,9 +63,9 @@ enum TomlFuzzGen {
     private static func key(_ n: Int, _ r: inout SplitMix64) -> String {
         switch Int.random(in: 0..<4, using: &r) {
         case 0: return "k\(n)"
-        case 1: return "\"q.\(n)\""           // quoted key with a dot
-        case 2: return "\(n)"                 // numeric bare key
-        default: return "k\(n)_sub.leaf\(n)"  // dotted key
+        case 1: return "\"q.\(n)\""
+        case 2: return "\(n)"
+        default: return "k\(n)_sub.leaf\(n)"
         }
     }
 
@@ -76,7 +73,7 @@ enum TomlFuzzGen {
         var out = ""
         for _ in 0..<Int.random(in: 0...3, using: &r) {
             if Bool.random(using: &r) { out += "# comment \(Int.random(in: 0...9, using: &r))" + nl(&r) }
-            else { out += indent(&r) + nl(&r) }   // blank (maybe with whitespace)
+            else { out += indent(&r) + nl(&r) }
         }
         return out
     }
@@ -84,15 +81,12 @@ enum TomlFuzzGen {
     static func document(_ r: inout SplitMix64) -> String {
         var s = ""
         var keyN = 0
-        // doc-level leading
         if Bool.random(using: &r) { s += "#:schema ./x.json" + nl(&r) }
         s += trivia(&r)
-        // root entries
         for _ in 0..<Int.random(in: 0...2, using: &r) {
             s += trivia(&r) + indent(&r) + key(keyN, &r) + " = " + scalar(&r) + inlineComment(&r) + nl(&r)
             keyN += 1
         }
-        // sections
         for sec in 0..<Int.random(in: 0...4, using: &r) {
             s += trivia(&r)
             let aot = Bool.random(using: &r)
@@ -105,7 +99,6 @@ enum TomlFuzzGen {
             }
         }
         s += trivia(&r)
-        // sometimes drop the very last newline
         if Bool.random(using: &r), s.hasSuffix("\n") {
             s.removeLast()
             if s.hasSuffix("\r") { s.removeLast() }

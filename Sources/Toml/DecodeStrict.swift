@@ -1,14 +1,14 @@
-// The strict TOML 1.0 value decoder — the conformance-grade replacement for the
-// lenient M1 `decodeScalar` (which routed through the family-subset `parseFlat`
-// and so could never pass toml-test). It is a recursive-descent parser over the
-// value's source scalars producing a `Toml.TypedValue`, and it THROWS on every
-// malformed value the official `invalid/*` corpus expects to be rejected.
+// The strict TOML 1.0 value decoder: a recursive-descent parser over a value's
+// source scalars producing a `Toml.TypedValue`. It THROWS on every malformed
+// value the official toml-test `invalid/*` corpus expects to be rejected —
+// the lenient `decodeScalar` (which rides the family-subset `parseFlat`)
+// structurally cannot, which is why the two coexist.
 //
-// It operates on the already-comment-stripped, trimmed value text the lossless
-// tiler captures (`Toml.lexValueText`), so there are no `#` comments to handle
-// here; whitespace and newlines only separate array/inline-table elements.
-// Strings reuse the shared `lexScanQuoted` scanner (Lexer.swift) so the decoder
-// and the tiler agree byte-for-byte about where every string starts and ends.
+// It operates on the comment-stripped, trimmed value text the tiler captures
+// (`Toml.lexValueText`), so there are no `#` comments to handle here;
+// whitespace and newlines only separate array / inline-table elements.
+// Strings reuse the shared `lexScanQuoted` scanner so the decoder and the
+// tiler agree byte-for-byte about where every string starts and ends.
 
 import Foundation
 
@@ -68,9 +68,6 @@ struct StrictParser {
         case "{":       return try parseInlineTable()
         case "t", "f":  return try parseBool()
         default:
-            // Number or datetime. Datetimes are recognised by their leading
-            // `dddd-dd-dd` (date) or `dd:dd` (time) shape; everything else is an
-            // integer or float.
             if looksLikeDate() || looksLikeTime() { return try parseDateTime() }
             return try parseNumber()
         }
@@ -84,7 +81,6 @@ struct StrictParser {
         throw err("invalid value (expected true/false)")
     }
 
-    /// If the literal `s` is next, consume it and return true.
     mutating func match(_ s: String) -> Bool {
         let w = Array(s.unicodeScalars)
         guard i + w.count <= a.count else { return false }
@@ -106,9 +102,9 @@ struct StrictParser {
         else         { return try decodeLiteral(content, multiline: multiline) }
     }
 
-    /// Decode a basic-string body (escapes processed). For multi-line bodies a
-    /// single leading newline is trimmed and a line-ending `\` folds following
-    /// whitespace incl. newlines.
+    /// Decode a basic-string body. TOML 1.0: a multi-line body trims one
+    /// leading newline, and a line-ending `\` folds the following whitespace
+    /// including newlines.
     func decodeBasic(_ raw: [Unicode.Scalar], multiline: Bool) throws -> String {
         var c = raw
         if multiline { c = trimLeadingNewline(c) }
@@ -132,8 +128,6 @@ struct StrictParser {
                 case "U":  out.append(try unicodeEscape(c, &k, digits: 8))
                 case " ", "\t", "\n", "\r":
                     guard multiline else { throw err("invalid escape '\\\(Character(e))'") }
-                    // Line-ending backslash: only whitespace may follow before
-                    // the newline; trim it and all following whitespace/newlines.
                     try foldLineEnding(c, &k)
                 default:
                     throw err("invalid/reserved escape '\\\(Character(e))'")
@@ -146,8 +140,8 @@ struct StrictParser {
         return String(out)
     }
 
-    /// Decode a literal-string body (verbatim, no escapes). A multi-line body
-    /// trims one leading newline; raw control chars are still rejected.
+    /// Decode a literal-string body (no escapes). A multi-line body trims one
+    /// leading newline; raw control chars are still rejected.
     func decodeLiteral(_ raw: [Unicode.Scalar], multiline: Bool) throws -> String {
         var c = raw
         if multiline { c = trimLeadingNewline(c) }
@@ -166,8 +160,8 @@ struct StrictParser {
         return c
     }
 
+    /// Precondition: `c[k]` is the `u` / `U`.
     private func unicodeEscape(_ c: [Unicode.Scalar], _ k: inout Int, digits: Int) throws -> Unicode.Scalar {
-        // c[k] == 'u'/'U'; consume it then `digits` hex digits.
         guard k + digits < c.count else { throw err("incomplete unicode escape") }
         var value: UInt32 = 0
         for d in 1...digits {
@@ -181,15 +175,15 @@ struct StrictParser {
         return s
     }
 
+    /// Precondition: `c[k]` is the first whitespace after the backslash. The
+    /// whitespace run MUST reach a newline — otherwise `\ ` is a bad escape,
+    /// not a line-ending backslash.
     private func foldLineEnding(_ c: [Unicode.Scalar], _ k: inout Int) throws {
-        // At c[k] = first whitespace/newline after the backslash. Skip spaces and
-        // tabs; the run MUST reach a newline (otherwise `\ ` is a bad escape).
         var j = k
         while j < c.count, c[j] == " " || c[j] == "\t" { j += 1 }
         guard j < c.count, c[j] == "\n" || c[j] == "\r" else {
             throw err("backslash must be followed by end-of-line whitespace only")
         }
-        // Now skip all whitespace + newlines up to the next non-whitespace.
         while j < c.count, c[j] == " " || c[j] == "\t" || c[j] == "\n" || c[j] == "\r" { j += 1 }
         k = j
     }
@@ -197,9 +191,9 @@ struct StrictParser {
     private func validateRaw(_ ch: Unicode.Scalar, multiline: Bool, literal: Bool = false,
                              next: Unicode.Scalar? = nil) throws {
         let v = ch.value
-        if v == 0x09 { return }                              // tab is always allowed
+        if v == 0x09 { return }                              // tab
         if multiline {
-            if v == 0x0A { return }                          // LF is a newline
+            if v == 0x0A { return }                          // LF
             if v == 0x0D, next == "\n" { return }            // CR only as part of CRLF
         }
         if v <= 0x08 || (v >= 0x0A && v <= 0x1F) || v == 0x7F {
@@ -237,7 +231,7 @@ struct StrictParser {
 
     mutating func parseInlineTable() throws -> Toml.TypedValue {
         i += 1
-        // Build through the redefinition machine so internal conflicts
+        // Built through the redefinition machine so internal conflicts
         // (`{a.b=1, a.b.c=2}`, `{b=1, b.c=2}`, duplicate keys) are rejected.
         let t = Toml.TreeTable(kind: .inline)
         skipSpaces()
@@ -269,8 +263,7 @@ struct StrictParser {
         }
     }
 
-    /// Parse a (possibly dotted, possibly quoted) key path inside an inline
-    /// table. Reuses the lossless dotted-key lexer for a single segment run.
+    /// A (possibly dotted, possibly quoted) key path inside an inline table.
     mutating func parseKeyPath() throws -> [String] {
         var segs: [String] = []
         while true {
@@ -300,13 +293,11 @@ struct StrictParser {
     // MARK: numbers (integer / float / specials)
 
     mutating func parseNumber() throws -> Toml.TypedValue {
-        // Lex the maximal bare token (alnum + _ . + -).
         let start = i
         while let c = peek(), isNumberChar(c) { i += 1 }
         let tok = String(String.UnicodeScalarView(a[start..<i]))
         guard !tok.isEmpty else { throw err("invalid value") }
 
-        // Special floats (lowercase only, optional sign).
         switch tok {
         case "inf", "+inf": return .float(.infinity)
         case "-inf":        return .float(-.infinity)
@@ -314,12 +305,12 @@ struct StrictParser {
         default: break
         }
 
-        // Radix-prefixed integers (no sign allowed).
+        // A signed radix int (`-0xFF`) is invalid TOML; it fails the prefix
+        // test here and is then rejected as a malformed decimal number.
         if tok.hasPrefix("0x") { return .integer(try radixInt(tok, prefix: "0x", radix: 16)) }
         if tok.hasPrefix("0o") { return .integer(try radixInt(tok, prefix: "0o", radix: 8)) }
         if tok.hasPrefix("0b") { return .integer(try radixInt(tok, prefix: "0b", radix: 2)) }
 
-        // Float (has '.', 'e'/'E') vs decimal integer.
         if tok.contains(".") || tok.contains("e") || tok.contains("E") {
             return .float(try decimalFloat(tok))
         }
@@ -349,8 +340,8 @@ struct StrictParser {
             }
         }
         let digits = try ungroup(body, allowed: ok)
-        // Radix integers are unsigned magnitudes and carry no sign, so the
-        // representable range is 0 ... Int64.max (2^63 and above overflow).
+        // Radix integers are unsigned magnitudes, so the representable range
+        // is 0 ... Int64.max (2^63 and above overflow).
         guard let mag = UInt64(digits, radix: radix), mag <= UInt64(Int64.max) else {
             throw err("integer out of range '\(tok)'")
         }
@@ -396,11 +387,11 @@ struct StrictParser {
             if let f = es.first, f == "+" || f == "-" { esign = String(f); es = es.dropFirst() }
             let ed = try ungroup(es, allowed: { $0.isASCIIDigit })
             guard !ed.isEmpty else { throw err("float exponent needs a digit '\(tok)'") }
-            normalized += "e" + esign + ed       // exponent MAY have leading zeros
+            normalized += "e" + esign + ed       // an exponent MAY have leading zeros (spec)
         }
-        // A finite literal that overflows binary64 (`1e400`) parses to `inf`
-        // rather than nil — reject it (the `inf`/`nan` specials were handled
-        // earlier, so genuine infinities never reach here).
+        // `Double("1e400")` yields `inf`, not nil — a finite literal that
+        // overflows binary64 must be rejected. The `inf`/`nan` specials were
+        // handled earlier, so a genuine infinity never reaches here.
         guard let d = Double(normalized), !d.isInfinite else {
             throw err("float out of range '\(tok)'")
         }
@@ -445,7 +436,7 @@ struct StrictParser {
     // MARK: datetimes
 
     func looksLikeDate() -> Bool {
-        guard i + 9 < a.count else { return false }   // need 10 scalars: dddd-dd-dd
+        guard i + 9 < a.count else { return false }   // 10 scalars: dddd-dd-dd
         func d(_ o: Int) -> Bool { isDigitScalar(a[i + o]) }
         return d(0) && d(1) && d(2) && d(3) && a[i+4] == "-"
             && d(5) && d(6) && a[i+7] == "-" && d(8) && d(9)
@@ -458,7 +449,7 @@ struct StrictParser {
     mutating func parseDateTime() throws -> Toml.TypedValue {
         if looksLikeDate() {
             let date = try readDate()
-            // Optional time, delimited by T/t or a single space.
+            // Spec: the date-time delimiter is `T`, `t`, or a single space.
             var delim: Bool = false
             if let c = peek(), c == "T" || c == "t" { i += 1; delim = true }
             else if peek() == " ", let n = peek(1), isDigitScalar(n) { i += 1; delim = true }
@@ -496,7 +487,6 @@ struct StrictParser {
         try validateTime(h, mi, se)
         let time = Toml.LocalTime(hour: h, minute: mi, second: se, fraction: frac)
 
-        // Offset: Z / z / ±HH:MM
         if let c = peek() {
             if c == "Z" || c == "z" { i += 1; return (time, .utc) }
             if c == "+" || c == "-" {
@@ -561,12 +551,13 @@ struct StrictParser {
 }
 
 extension Toml {
-    /// Decode one key segment's quoting for the lossless DOM's key/path
-    /// identity: a basic-quoted key (`"…"`) has its escapes processed (so
-    /// `"À"` and `À` are the SAME key), a literal-quoted key (`'…'`) is
-    /// verbatim, a bare key is returned unchanged. Best-effort — an invalid
-    /// escape falls back to the raw interior; strict key-escape rejection is
-    /// `lexDottedPathStrict`'s job.
+    /// Decode one key segment's quoting for the lossless DOM's key identity:
+    /// a basic-quoted key has its escapes processed (so `"À"` and `À`
+    /// are the SAME key), a literal-quoted key is verbatim, a bare key is
+    /// unchanged. Best-effort — an invalid escape falls back to the raw
+    /// interior, because this also serves caller-supplied lookup keys that
+    /// must not throw; strict key-escape rejection is `lexDottedPathStrict`'s
+    /// job.
     static func decodeKeySegment(_ raw: String) -> String {
         let a = Array(raw.unicodeScalars)
         guard a.count >= 2 else { return raw }

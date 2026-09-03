@@ -1,26 +1,19 @@
 // Source spans for the lossy nested `parse` projection.
 //
-// The lossy `parse` (nested, strict — the chord path) used to attribute a
-// warning to its source line via a synthetic `__line__` dict key seeded into
-// every array-of-tables row. That key was a leaky abstraction: every consumer
-// iterating a row's fields had to skip it, a user key literally named
-// `__line__` could shadow it, and synthesized rows had to re-thread it by hand.
+// An array-of-tables row carries its `[[header]]` location as a TYPED
+// `SourceSpan` on a dedicated `Row` value, never as a synthetic dict key
+// (`__line__`): a synthetic key leaks into every field iteration, can be
+// shadowed by a user key of the same name, and must be re-threaded by hand
+// when a consumer synthesizes a row. A `Row` rides along on Swift value-copy
+// when a consumer clones a row, which fits the row-clone desugaring the
+// family's config layers use.
 //
-// It is replaced by a TYPED location carried on a dedicated `Row` value: each
-// element of `Value.arrayOfTables` is now a `Row` (its `fields` dict + the
-// `SourceSpan` of the `[[header]]` that opened it), not a bare
-// `[String: Value]`. The span can't collide with a user key, never appears in
-// a field iteration, and rides along on Swift value-copy when a consumer
-// clones a row to synthesize a new one — so it fits the row-clone desugaring
-// the family's config layers already use.
-//
-// Only the nested strict parses (`parse`, and its DOM-derived twin
-// `parseWithSpans`) construct `Row`s. `parseFlat` keeps its rows as plain
-// `[[String: Value]]` (its flat consumers don't need attribution).
+// Only the nested strict parse constructs `Row`s. `parseFlat` keeps its rows
+// as plain `[[String: Value]]` — its flat consumers don't attribute warnings.
 //
 // Row spans locate the `[[header]]`; ENTRY-level key/value locations (the
-// column-precise `(config.toml:N:C)` input) live in `parseWithSpans`'s
-// side index — see ParseWithSpans.swift.
+// column-precise `(config.toml:N:C)` input) live in `parseWithSpans`'s side
+// index — see ParseWithSpans.swift.
 
 import Foundation
 
@@ -39,18 +32,13 @@ public extension Toml {
         }
     }
 
-    /// One element of an array-of-tables: the row's `key = value` fields plus
-    /// the `SourceSpan` of the `[[header]]` that opened it.
-    ///
-    /// Constructed only by the nested strict `parse` (`parseFlat` keeps its
-    /// rows as plain `[[String: Value]]`). The `subscript` forwards to
-    /// `fields`, so a consumer reads `row["input"]` exactly as it read a bare
-    /// dict before — the only new surface is `row.span`.
+    /// One element of an array-of-tables: the row's fields plus the
+    /// `SourceSpan` of the `[[header]]` that opened it. The subscript forwards
+    /// to `fields` so a consumer reads `row["input"]` exactly like the bare
+    /// dict it replaced.
     struct Row: Sendable, Equatable {
-        /// The row's `key = value` assignments (dotted keys collapsed to
-        /// nested tables, same as the rest of `parse`'s tree).
         public var fields: [String: Value]
-        /// The `[[header]]` location, or `nil` for a hand-constructed row.
+        /// `nil` for a hand-constructed row.
         public var span: SourceSpan?
 
         public init(fields: [String: Value] = [:], span: SourceSpan? = nil) {
@@ -58,7 +46,6 @@ public extension Toml {
             self.span = span
         }
 
-        /// Field access sugar: `row["input"]` reads/writes `fields["input"]`.
         public subscript(_ key: String) -> Value? {
             get { fields[key] }
             set { fields[key] = newValue }

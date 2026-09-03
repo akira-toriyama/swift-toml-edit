@@ -2,8 +2,8 @@ import Testing
 import Foundation
 @testable import Toml
 
-// Regression tests for the bugs the M2 adversarial review confirmed — each lives
-// in a corpus blind spot, so these are the durable guard.
+// Regression tests for the bugs the multi-line-string adversarial review
+// confirmed — each lives in a corpus blind spot, so these are the only guard.
 @Suite struct ReviewFixesTests {
 
     private func parseThrows(_ s: String, _ note: Comment? = nil, _ loc: SourceLocation = #_sourceLocation) {
@@ -32,8 +32,6 @@ import Foundation
         parseThrows("x = 1\n\u{2002}\ny = 2\n", "U+2002-only line")
     }
     @Test func loneCRLineRejected() {
-        // A CR NOT followed by LF (here at EOF) is a stray control char, not a
-        // blank line. (CRLF, by contrast, is a valid empty line.)
         parseThrows("# c\n\u{0D}", "a lone-CR line is not blank")
     }
     @Test func ordinaryBlankLinesStillRoundTrip() throws {
@@ -57,8 +55,7 @@ import Foundation
     }
     @Test func validContinuationCommentAndHashInStringAccepted() throws {
         _ = try Toml.Annotated(parsing: "a = [\n 1, # fine\ttab ok\n]\n")
-        // A `#` inside an open multi-line string body is content, not a comment.
-        _ = try Toml.Annotated(parsing: "a = \"\"\"\nhas # hash\n\"\"\"\n")
+        _ = try Toml.Annotated(parsing: "a = \"\"\"\nhas # hash\n\"\"\"\n")   // `#` in string body
     }
 
     // M2 — a finite float literal that overflows binary64 is rejected.
@@ -82,8 +79,8 @@ import Foundation
     // owns, or nested tables rebind to the wrong element / orphan into invalid
     // TOML.
 
-    /// The `name` field of each element of the array-of-tables `key`, after
-    /// re-parsing `doc`'s rendered output through the typed tree.
+    /// `field` of each element of the array-of-tables `key`, read back through
+    /// the typed tree so the rendered output is also proven valid.
     private func aotField(_ doc: Toml.Annotated, _ key: String, _ field: String) throws -> [String] {
         guard case .table(let root) = try Toml.Annotated(parsing: doc.render()).typedTree(),
               case .array(let elems)? = root.first(where: { $0.key == key })?.value else { return [] }
@@ -117,8 +114,6 @@ import Foundation
 
         """)
         let after = doc.removingArrayOfTablesElement(at: ["fruit"], ordinal: 0)
-        // The apple element AND its [fruit.physical] are gone; only banana left,
-        // and the result re-parses cleanly (no orphaned sub-table).
         #expect(try aotField(after, "fruit", "name") == ["banana"])
     }
 
@@ -136,7 +131,6 @@ import Foundation
         """)
         let after = doc.reorderingArrayOfTables(at: ["fruit"], [1, 0])
         #expect(try aotField(after, "fruit", "name") == ["banana", "apple"])
-        // Each color stays bound to its element (not left behind).
         #expect(try aotSubColor(after) == ["yellow", "red"])
     }
 
@@ -146,12 +140,10 @@ import Foundation
         let s = "\u{FEFF}x = 1\n"
         #expect(try Toml.Annotated(parsing: s).render() == s)
         #expect(try Toml.Annotated(parsing: s).render().unicodeScalars.first == "\u{FEFF}")
-        // lossy path: first key is `x`, not `\u{FEFF}x`
         #expect(try Toml.parse(s)["x"]?.asInt == 1)
         #expect(Toml.parseFlat(s).tables[""]?["x"]?.asInt == 1)
     }
     @Test func bomMidDocumentNotStripped() {
-        // A BOM that is NOT at offset 0 is a real (invalid) character in a key.
         parseThrows("x = 1\n\u{FEFF}y = 2\n", "mid-document BOM is invalid")
     }
 
@@ -160,15 +152,13 @@ import Foundation
     @Test func dotNamedKeyLookup() throws {
         let doc = try Toml.Annotated(parsing: #""a.b" = 1"# + "\n")
         #expect(doc.root.entry(forKeyParts: ["a.b"])?.value == .int(1))
-        #expect(doc.root.entry(forKey: "a.b") == nil)          // parsed as path ["a","b"]
+        #expect(doc.root.entry(forKey: "a.b") == nil)
         #expect(doc.root.entry(forKey: #""a.b""#)?.value == .int(1))
     }
 
-    // The DOM lookup splits via lexDottedPath, which DECODES basic-string
-    // escapes per segment (the lossless side), unlike the lossy
-    // splitDottedPath (literal — see LossyProjectionTests.lossyKeyEscapesStayLiteral).
-    // So a `"a\tb"` lookup resolves to the escape-decoded key the strict
-    // parser stored. Pins the finisher split that shares scanDottedSegments.
+    // The lossless finisher (`lexDottedPath`) DECODES basic-string escapes,
+    // unlike the lossy one (LossyProjectionTests.lossyKeyEscapesStayLiteral).
+    // Together the two tests pin the finisher split over `scanDottedSegments`.
     @Test func dottedPathLookupDecodesKeyEscapes() throws {
         let doc = try Toml.Annotated(parsing: #""a\tb" = 1"# + "\n")
         #expect(doc.root.entry(forKey: #""a\tb""#)?.value == .int(1))
