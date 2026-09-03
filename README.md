@@ -21,8 +21,13 @@ The 1.0 bar — **full TOML 1.0 round-trip** — is **met**: the library passes 
 entire official [`toml-test`](https://github.com/toml-lang/toml-test) 1.0.0 suite
 in **both directions** (decoder and encoder), and a byte-identity corpus +
 generative fuzzer guard the round-trip invariant on top. The public API follows
-semantic versioning; the current major is **v2** (v2.0 gave array-of-tables rows
-a typed `SourceSpan`; v2.1 added the per-element value edit ops and `Toml.encode`).
+semantic versioning; the current major is **v3**. v3.0 retired the line-based
+strict scanner: `Toml.parse` now delegates to `parseWithSpans`, so it parses CRLF
+documents correctly and throws on triple-quoted strings, control characters in
+comments, `[]` headers and invalid bare keys (`parseFlat` is unchanged). Before
+that, v2.0 gave array-of-tables rows a typed `SourceSpan`, v2.1 added the
+per-element value edit ops and `Toml.encode`, and v2.3 added `parseWithSpans`
+(per-entry line+column spans) and the scalar `settingValue(_:atTable:forKey:)`.
 
 ## Usage
 
@@ -68,7 +73,7 @@ option. See `CLAUDE.md` for the design and invariants.
 ## Install
 
 ```swift
-.package(url: "https://github.com/akira-toriyama/swift-toml-edit", from: "2.1.0")
+.package(url: "https://github.com/akira-toriyama/swift-toml-edit", from: "3.0.0")
 ```
 
 ```swift
