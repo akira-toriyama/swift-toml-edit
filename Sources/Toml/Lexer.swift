@@ -1,17 +1,15 @@
 // Shared, string-aware lexer primitives for the lossless parser.
 //
-// The M1 tiler classified each physical line independently and only continued a
-// value across lines when `[`/`{` brackets were unbalanced. That model cannot
-// see a multi-line string: a value opening `"""`/`'''` leaves the string open
-// across the newline, but the M1 scanner has no concept of a triple-quote, so
-// the body lines were re-classified as phantom headers / key=values (or threw
-// `expected '='`). These primitives give every scanner ONE shared notion of
-// where a string starts and ends — single- AND triple-quoted, basic AND literal
-// — so comment-stripping, value-continuation and (later) typed decoding can
-// never disagree about string boundaries.
+// Every scanner — comment-stripping, value-continuation, `=` finding, typed
+// decoding — gets ONE shared notion of where a string starts and ends,
+// single- AND triple-quoted, basic AND literal (`lexScanQuoted`), so they can
+// never disagree about string boundaries. A scanner that only tracks bracket
+// balance cannot see a multi-line string: its body lines get re-classified
+// as phantom headers / key=values, and a DOM can round-trip byte-identically
+// while being structurally wrong.
 //
 // All scanners work on `[Unicode.Scalar]` (not `Character`) so they compose
-// with `lexLines`' scalar model and so a CRLF folded into one `Character` can't
+// with `lexLines`' scalar model and a CRLF folded into one `Character` can't
 // hide a boundary.
 
 import Foundation
@@ -49,7 +47,7 @@ extension Toml {
             var j = i + 3
             while j < a.count {
                 let c = a[j]
-                if basic && c == "\\" { j += 2; continue }   // escape: skip next scalar (across \n)
+                if basic && c == "\\" { j += 2; continue }   // an escape may span "\n" (line-ending backslash)
                 if c == q {
                     var run = 0
                     while j + run < a.count && a[j + run] == q { run += 1 }
@@ -57,29 +55,28 @@ extension Toml {
                         let content = min(run - 3, 2)         // trailing-quote rule
                         return (j + content + 3, true, true)
                     }
-                    j += run                                 // <3 quotes → content
+                    j += run
                     continue
                 }
                 j += 1
             }
-            return (a.count, false, true)                    // unterminated multi-line string
+            return (a.count, false, true)
         } else {
             var j = i + 1
             while j < a.count {
                 let c = a[j]
-                if c == "\n" { return (j, false, false) }    // single-line: never crosses \n
+                if c == "\n" { return (j, false, false) }
                 if basic && c == "\\" { j += 2; continue }
                 if c == q { return (j + 1, true, false) }
                 j += 1
             }
-            return (a.count, false, false)                   // unterminated single-line string
+            return (a.count, false, false)
         }
     }
 
     /// Whether the accumulated value source ENDS inside an unterminated
-    /// multi-line string — so the next physical line is string body (validated
-    /// by the string decoder), not code/comment. Used to decide whether a
-    /// continuation line's `#` comment should be control-char-validated.
+    /// multi-line string — the next physical line is then string body, not
+    /// code, so a `#` on it must not be comment-validated.
     static func lexInOpenMultilineString(_ a: [Unicode.Scalar]) -> Bool {
         var i = 0
         while i < a.count {
@@ -96,11 +93,11 @@ extension Toml {
         return false
     }
 
-    /// Whether a value's accumulated source (which may already span physical
-    /// lines, newlines included) is still OPEN — i.e. the parser must pull
-    /// another physical line. Open while a `[`/`{` is unbalanced OR a multi-line
-    /// string is unterminated. `#` outside a string begins a comment to the end
-    /// of its line. Single-line strings never extend the value across a newline.
+    /// Whether a value's accumulated source is still OPEN — the tiler must
+    /// pull another physical line: a `[`/`{` is unbalanced OR a multi-line
+    /// string is unterminated. A single-line string never extends a value
+    /// across a newline; that is what makes an unterminated one throw
+    /// instead of swallowing the next line.
     static func lexValueOpen(_ a: [Unicode.Scalar]) -> Bool {
         var i = 0, depth = 0
         while i < a.count {
@@ -111,7 +108,7 @@ extension Toml {
             }
             if c == "\"" || c == "'" {
                 let (next, closed, multiline) = lexScanQuoted(a, i)
-                if multiline && !closed { return true }      // open triple-quoted string
+                if multiline && !closed { return true }
                 i = next
                 continue
             }
@@ -122,9 +119,8 @@ extension Toml {
         return depth > 0
     }
 
-    /// Index of the `=` that separates a key from its value — the first `=` that
-    /// is OUTSIDE any string (so an `=` inside a quoted key like `"a=b" = 1`, or
-    /// inside the value, is skipped). Returns nil if there is no such `=`.
+    /// The key/value separator: the first `=` OUTSIDE any string, so an `=`
+    /// inside a quoted key (`"a=b" = 1`) is not mistaken for it.
     static func lexFindEq(_ a: [Unicode.Scalar]) -> Int? {
         var i = 0
         while i < a.count {
@@ -140,11 +136,9 @@ extension Toml {
         return nil
     }
 
-    /// Strip an inline `#` comment, string-aware (single- and triple-quoted).
-    /// Everything from the first `#` that is outside a string to end of line is
-    /// removed; a `#` inside any string (incl. a multi-line string body, where
-    /// the close is on a later line so the whole remainder is string interior)
-    /// is preserved. Used to classify the FIRST line of a construct.
+    /// Strip an inline `#` comment, string-aware. A `#` inside an OPEN
+    /// multi-line string is preserved too: the close is on a later line, so
+    /// the whole remainder is string interior.
     static func lexStripComment(_ s: String) -> String {
         let a = Array(s.unicodeScalars)
         var i = 0
@@ -165,10 +159,9 @@ extension Toml {
         return String(out)
     }
 
-    /// Validate that a line's `#` comment (if any) contains no raw control
-    /// characters other than tab — TOML 1.0 forbids control chars (U+0000–08,
-    /// U+000A–1F, U+007F) in comments. String-aware so a `#` inside a string is
-    /// not treated as a comment. Throws `Toml.ParseError` on a bad byte.
+    /// TOML 1.0 forbids raw control characters other than tab (U+0000–08,
+    /// U+000A–1F, U+007F) in a comment. String-aware so a `#` inside a string
+    /// is not treated as a comment.
     static func lexValidateComment(_ s: String, line: Int) throws {
         let a = Array(s.unicodeScalars)
         var i = 0
@@ -182,7 +175,7 @@ extension Toml {
             if c == "#" {
                 for j in (i + 1)..<a.count {
                     let v = a[j].value
-                    if v == 0x09 { continue }                  // tab allowed
+                    if v == 0x09 { continue }
                     if v <= 0x08 || (v >= 0x0A && v <= 0x1F) || v == 0x7F {
                         throw Toml.ParseError(line: line,
                             message: "control character U+\(String(format: "%04X", v)) in comment")
@@ -194,17 +187,16 @@ extension Toml {
         }
     }
 
-    /// The value text the lossy decode reads: the value source with inline `#`
-    /// comments removed (string-aware, per physical line) but interior newlines
-    /// and string bodies preserved, then whitespace-trimmed. Newlines are kept
-    /// so a multi-line array/string survives to the decode layer intact.
+    /// `Entry.valueText`: the value source with inline `#` comments removed
+    /// (string-aware) and the edges trimmed. Interior newlines are KEPT so a
+    /// multi-line array / string reaches the decode layer intact.
     static func lexValueText(_ a: [Unicode.Scalar]) -> String {
         var i = 0
         var out = String.UnicodeScalarView()
         while i < a.count {
             let c = a[i]
             if c == "#" {
-                while i < a.count && a[i] != "\n" { i += 1 }  // drop comment, keep the newline
+                while i < a.count && a[i] != "\n" { i += 1 }
                 continue
             }
             if c == "\"" || c == "'" {
@@ -217,19 +209,17 @@ extension Toml {
             out.append(c)
             i += 1
         }
-        // Trim only ASCII space / tab / newline — NOT U+000B/U+000C, which
-        // `.whitespacesAndNewlines` would also strip, masking a raw vertical-tab
-        // / form-feed control char that TOML forbids (the strict decoder must
-        // see e.g. `1\u{0B}` and reject it on the trailing-character check).
+        // NOT `.whitespacesAndNewlines`: it would also strip U+000B / U+000C,
+        // masking a raw vertical-tab / form-feed the strict decoder must see
+        // (e.g. `1\u{0B}`) and reject on its trailing-character check.
         return Toml.asciiTrim(String(out))
     }
 
-    /// Trim the whitespace / line-terminator edges of a (possibly multi-line)
-    /// VALUE source — but NOT a trailing LONE CR (U+000D not part of a CRLF).
-    /// A CRLF terminator's CR IS stripped (the LF precedes it here), yet a bare
-    /// CR is an invalid TOML control char that must survive to the strict
-    /// decoder to be rejected — stripping it would silently accept e.g.
-    /// `a = 1\r` (matching the deliberate VT/FF non-trim below).
+    /// Trim the whitespace / line-terminator edges of a VALUE source — but
+    /// NOT a trailing LONE CR. A CRLF terminator's CR is stripped (its LF
+    /// precedes it here), whereas a bare CR is an invalid control char that
+    /// must survive to the strict decoder; stripping it would silently accept
+    /// `a = 1\r`.
     static func asciiTrim(_ s: String) -> String {
         var a = Array(s.unicodeScalars)
         while let f = a.first, f == " " || f == "\t" || f == "\n" || f == "\r" { a.removeFirst() }
@@ -238,18 +228,17 @@ extension Toml {
             case " ", "\t": a.removeLast()
             case "\n":
                 a.removeLast()
-                if a.last == "\r" { a.removeLast() }   // strip a CRLF pair whole
-            default: break trailing                     // stop at a lone CR (or content)
+                if a.last == "\r" { a.removeLast() }
+            default: break trailing
             }
         }
         return String(String.UnicodeScalarView(a))
     }
 
-    /// Trim leading/trailing ASCII space and tab ONLY — the exact TOML inline
-    /// whitespace set. Used for blank-line / header classification, where a CR
-    /// or LF surviving in a physical line's text (lexLines strips the real
-    /// terminator) is a STRAY control char, not whitespace, so the line must NOT
-    /// count as blank (e.g. a lone-CR line is invalid, not trivia).
+    /// Trim ASCII space and tab ONLY — the exact TOML inline whitespace set.
+    /// For blank-line / header classification: a CR or LF surviving in a
+    /// physical line's text (`lexLines` strips the real terminator) is a
+    /// STRAY control char, so the line must NOT count as blank.
     static func asciiSpaceTrim(_ s: String) -> String {
         var a = Array(s.unicodeScalars)
         while let f = a.first, f == " " || f == "\t" { a.removeFirst() }
@@ -257,14 +246,13 @@ extension Toml {
         return String(String.UnicodeScalarView(a))
     }
 
-    /// Strict dotted-key / header-path parse: split on top-level dots
-    /// (string-aware), then validate AND decode each segment — a bare key is
-    /// ASCII `[A-Za-z0-9_-]+`, a quoted key is a SINGLE-line basic/literal
-    /// string (escapes decoded for basic), and nothing else. Throws on an empty
-    /// segment (`.`, `a.`, `a..b`), a bare key with a disallowed character, a
-    /// multi-line (`"""`) key, trailing junk after a quoted segment, or a bad
-    /// escape. This is the conformance-grade key grammar; the lenient
-    /// `lexDottedPath` remains for library-side lookups.
+    /// The conformance-grade key grammar (TOML 1.0): a bare key is ASCII
+    /// `[A-Za-z0-9_-]+`, a quoted key is a SINGLE-line basic / literal string
+    /// (escapes decoded for basic), and nothing else. Throws on an empty
+    /// segment (`.`, `a.`, `a..b`), a disallowed bare-key character, a
+    /// multi-line key, trailing junk after a quoted segment, or a bad escape.
+    /// The lenient `lexDottedPath` remains for library-side lookups, where a
+    /// caller-supplied key must not throw.
     static func lexDottedPathStrict(_ s: String, line: Int) throws -> [String] {
         let a = Array(s.unicodeScalars)
         var rawSegs: [[Unicode.Scalar]] = []

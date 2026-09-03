@@ -7,13 +7,13 @@
 // daemon relies on lives in the LOSSY PROJECTION, not here — a format-preserving
 // editor must understand the whole document, not silently drop part of it.
 //
-// Multi-line constructs (arrays, inline tables, and — since M2 —
-// multi-line basic/literal strings `"""`/`'''`) span physical lines: a value
-// is consumed line-by-line until it closes (see `Toml.lexValueOpen` and the
-// shared string-aware scanners in Lexer.swift). The tiler is concerned with
-// STRUCTURE and byte-faithful round-trip; VALUE validity (a malformed number,
-// a reserved escape, a bad datetime) is the strict decode layer's job, not the
-// tiler's — so an invalid value still tiles here and is rejected on decode.
+// Multi-line constructs (arrays, inline tables, multi-line basic / literal
+// strings) span physical lines: a value is consumed line-by-line until it
+// closes (`Toml.lexValueOpen` and the shared string-aware scanners in
+// Lexer.swift). The tiler is concerned with STRUCTURE and byte-faithful
+// round-trip only; VALUE validity (a malformed number, a reserved escape, a
+// bad datetime) is the strict decode layer's job — an invalid value still
+// tiles here and is rejected on decode.
 
 import Foundation
 
@@ -34,42 +34,40 @@ public extension Toml.Annotated {
         }
         let lines = Toml.lexLines(src)
 
-        var leading = ""                  // doc-level leading (before first content)
+        var leading = ""
         var sawContent = false
         var root = Body()
         var blocks: [Block] = []
-        var pending = ""                  // trivia accumulated since last content
+        var pending = ""
 
         func appendEntry(_ e: Entry) {
             if blocks.isEmpty { root.entries.append(e) }
             else { blocks[blocks.count - 1].body.entries.append(e) }
         }
 
-        // Append trailing trivia to whichever body is currently open (the
-        // root, or the last block's body).
         func appendTrailing(_ s: String) {
             guard !s.isEmpty else { return }
             if blocks.isEmpty { root.trailing += s }
             else { blocks[blocks.count - 1].body.trailing += s }
         }
 
-        // For a key/value: all pending trivia becomes its leading (entries are
-        // not reordered, so no split is needed). The first content token sends
-        // its pending to the document `leading` (pragma / file header — never
-        // moves).
+        // All pending trivia becomes the entry's leading — entries are never
+        // reordered, so no separator / banner split is needed. The first
+        // content token of the document sends its pending to the document
+        // `leading` instead (pragma / file header — never moves).
         func takeEntryLeading() -> String {
             defer { pending = "" }
             if !sawContent { leading = pending; sawContent = true; return "" }
             return pending
         }
 
-        // For a header: split pending so blank-line SEPARATORS stay with the
-        // PREVIOUS block (as its body.trailing) and only the comment BANNER
-        // immediately above this header becomes its leading. That way
-        // reorder / delete carry each element's own banner while the blank-line
-        // separators stay uniform (the wand#129 rule, refined for clean edits).
-        // Round-trip is unaffected — render concatenates trailing + leading in
-        // source order regardless of where the split falls.
+        // Headers DO move, so pending is split: blank-line SEPARATORS stay
+        // with the PREVIOUS block (its body.trailing) and only the comment
+        // BANNER directly above this header becomes its leading. Reorder /
+        // delete then carry each element's own banner while the separators
+        // stay uniform (the wand#129 rule). Round-trip is unaffected — render
+        // concatenates trailing + leading in source order wherever the split
+        // falls.
         func takeBlockLeading() -> String {
             defer { pending = "" }
             if !sawContent { leading = pending; sawContent = true; return "" }
@@ -93,13 +91,11 @@ public extension Toml.Annotated {
             // `.whitespacesAndNewlines` the latter).
             let trimmed = Toml.asciiSpaceTrim(code)
 
-            // --- trivia: blank line or comment-only line ---
             if trimmed.isEmpty {
                 pending += text + term
                 continue
             }
 
-            // --- table / array-of-tables header ---
             if trimmed.hasPrefix("[") {
                 let kind: Block.Kind
                 let inner: Substring
@@ -123,8 +119,6 @@ public extension Toml.Annotated {
                 continue
             }
 
-            // --- key = value (value may span lines: multi-line array, inline
-            //     table, or multi-line string) ---
             let codeScalars = Array(code.unicodeScalars)
             guard let eqOffset = Toml.lexFindEq(codeScalars) else {
                 throw Toml.ParseError(line: lineNo, message: "expected '=' in '\(trimmed)'")
@@ -132,13 +126,10 @@ public extension Toml.Annotated {
             let keyText = String(String.UnicodeScalarView(codeScalars[0..<eqOffset]))
             let key = try Toml.lexDottedPathStrict(keyText, line: lineNo)
 
-            // The value source is everything in `raw` after the `=`. `code`'s
-            // prefix up to the value equals `raw`'s (comment-stripping only
-            // touches the trailing comment, which is after the value), so we can
-            // slice `raw` by scalar offset. A value that leaves brackets open OR
-            // a multi-line string unterminated continues onto following physical
-            // lines — consume them VERBATIM into `raw` (round-trip is byte-exact)
-            // until the value closes (or EOF).
+            // Slicing `raw` by an offset found in `code` is sound because
+            // comment-stripping only removes a suffix, so the two share every
+            // scalar up to the value. Continuation lines are consumed VERBATIM
+            // into `raw` — round-trip is byte-exact.
             var raw = text + term
             let valueStart = eqOffset + 1
             func valueSource() -> [Unicode.Scalar] {
@@ -146,10 +137,9 @@ public extension Toml.Annotated {
             }
             while Toml.lexValueOpen(valueSource()) && i < lines.count {
                 let (ctext, cterm) = lines[i]
-                // Validate a continuation line's comment for control chars too —
-                // but ONLY when this line is code (a multi-line array / inline
-                // table), not the interior of an open multi-line string (where a
-                // `#` is string body, validated by the decoder).
+                // Inside an open multi-line string a `#` is string body (the
+                // decoder validates it), so comment validation applies only
+                // to continuation lines that are code.
                 if !Toml.lexInOpenMultilineString(valueSource()) {
                     try Toml.lexValidateComment(ctext, line: i + 1)
                 }
@@ -160,9 +150,7 @@ public extension Toml.Annotated {
             appendEntry(Entry(leading: takeEntryLeading(), raw: raw, key: key, valueText: valueText))
         }
 
-        // Trivia left at EOF: the document's leading (if there was no content
-        // at all) or the trailing of the final body. Nothing follows it, so it
-        // is not split.
+        // Trivia left at EOF is not split — nothing follows it.
         if !sawContent { leading = pending }
         else { appendTrailing(pending) }
 
@@ -173,23 +161,15 @@ public extension Toml.Annotated {
 // MARK: - Lossless-parser helpers (internal)
 //
 // Line splitting, trivia attribution and dotted-key lexing for the lossless
-// DOM. The string-aware scanners these build on (`lexScanQuoted`,
-// `lexValueOpen`, `lexStripComment`, …) live in Lexer.swift.
-//
-// Unification status (the post-M2 plan): COMPLETE. `parseWithSpans`
-// (ParseWithSpans.swift) IS the strict lossy parse derived over this DOM —
-// nested tree plus per-entry spans — and since v3 `parse` simply delegates
-// to it (chord, its only consumer, migrated first; the line-based strict
-// scanner is retired). `parseFlat` stays a line scanner BY DESIGN: its
-// "skip the bad line" leniency cannot ride a strict tiler without an
-// error-recovery story nobody needs yet.
+// DOM. The string-aware scanners these build on live in Lexer.swift.
 
 extension Toml {
 
     /// Split into physical lines preserving exact terminators ("\n", "\r\n",
-    /// or "" for a final line without a trailing newline). The concatenation
-    /// of every `text + term` reproduces the source byte-for-byte (CRLF-safe:
-    /// we scan Unicode scalars, since Swift folds "\r\n" into one Character).
+    /// or "" for a final line without a trailing newline), so that the
+    /// concatenation of every `text + term` reproduces the source
+    /// byte-for-byte. Scans Unicode scalars because Swift folds "\r\n" into
+    /// one Character, which would hide the CR.
     static func lexLines(_ s: String) -> [(text: String, term: String)] {
         let scalars = Array(s.unicodeScalars)
         var out: [(String, String)] = []
@@ -230,7 +210,7 @@ extension Toml {
         where Toml.asciiSpaceTrim(line.text).isEmpty {
             lastBlank = idx
         }
-        if lastBlank < 0 { return ("", pending) }   // no separator → all banner
+        if lastBlank < 0 { return ("", pending) }
         var trailing = "", banner = ""
         for (idx, line) in lines.enumerated() {
             if idx <= lastBlank { trailing += line.text + line.term }
@@ -239,32 +219,26 @@ extension Toml {
         return (trailing, banner)
     }
 
-    /// Split a dotted key / header on top-level dots, keeping quoted segments
-    /// intact (`a."b.c"` → `["a", "b.c"]`) and unquoting each segment.
+    /// The LOSSLESS dotted-path finisher: same scan loop as the lossy
+    /// `splitDottedPath`, but each segment's basic-string escapes are DECODED,
+    /// so a quoted key and its decoded form are one identity for DOM lookup.
+    /// Keep the two finishers distinct — see `scanDottedSegments`.
     static func lexDottedPath(_ s: String) -> [String] {
-        // Shares the scan loop with the lossy `splitDottedPath`, but DECODES
-        // basic-string escapes per segment (lexUnquoteKey) — the lossy side
-        // keeps them literal (unquoteKey). Keep these two finishers distinct.
         Toml.scanDottedSegments(s).map { Toml.lexUnquoteKey($0.trimmingCharacters(in: .whitespaces)) }
     }
 
-    /// Resolve a key segment's quoting: strip a literal `'…'` pair verbatim,
-    /// decode a basic `"…"` pair's escapes, leave a bare key as-is — so a quoted
-    /// key and its decoded form are one identity (`Toml.decodeKeySegment`).
     static func lexUnquoteKey(_ raw: String) -> String {
         Toml.decodeKeySegment(raw)
     }
 
     /// Decode a value's raw spelling into the lossy `Toml.Value` on demand
-    /// (used by `Annotated.Entry.value`). Reuses the proven lossy grammar by
-    /// round-tripping through `parseFlat`, so it can never drift from it.
-    /// Returns nil for spellings outside the M1 scalar grammar.
+    /// (`Annotated.Entry.value`). Routes through `parseFlat` so it can never
+    /// drift from the lossy grammar; nil for spellings outside it.
     static func decodeScalar(_ text: String) -> Toml.Value? {
-        // A triple-quoted spelling must be rejected up front (like the strict
-        // fold does): it is outside the M1 grammar, but the naive quote model
-        // would close it early and fabricate a plausible fragment (`"""` reads
-        // as the string `"`) instead of failing — the tiler hands multi-line
-        // string spellings to `valueText`, so this IS reachable (t-fjr0).
+        // The tiler hands multi-line string spellings to `valueText`, and the
+        // naive quote model would close a triple quote early and fabricate a
+        // plausible fragment (`"""` reads as the string `"`) instead of
+        // failing — so reject up front, as the strict fold does (t-fjr0).
         if containsMultilineStringSpelling(text) { return nil }
         return Toml.parseFlat("__v__ = \(text)").tables[""]?["__v__"]
     }

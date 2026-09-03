@@ -1,86 +1,58 @@
-// Toml — the config-oriented, LOSSY READ projection of the library.
+// The config-oriented, LOSSY READ projection: the value-only read path the
+// atelier apps use for config, where a plain dict/tree of values is wanted,
+// not a format-preserving document. Full TOML 1.0 (both directions) lives in
+// the sibling files listed at the bottom.
 //
-// This file is NOT the whole module: it is the value-only read path the
-// atelier app family uses for config, where you want a plain dict/tree of
-// values, not a format-preserving document. Full TOML 1.0 conformance
-// (both directions) lives in the sibling files — see the pointer at the
-// bottom. It stays zero-dep (Apple frameworks only, no SwiftPM TOML lib).
+// Two skins over one shared scalar core, because the consumers diverged on
+// SHAPE and on ERROR POLICY:
+//   • `parse(_:)  throws -> [String: Value]`     — NESTED, STRICT (chord):
+//     dotted keys collapse, `[[a.b]]` nests, every AoT row is a `Row`
+//     carrying the `SourceSpan` of its header for warning attribution
+//     (Span.swift).
+//   • `parseFlat(_:) -> Document`                — FLAT, LENIENT (facet /
+//     perch / wand): tables keyed by the LITERAL header text
+//     (`tables["cast.overlay.trail"]`), and a malformed line is dropped
+//     rather than thrown so a typo costs one binding, not the daemon.
+//   • `parseWithSpans(_:) throws -> SpannedTree` — `parse`'s tree plus
+//     per-entry / per-header line+column spans (ParseWithSpans.swift). It is
+//     the ONE strict engine: `parse` returns its `.tree`.
 //
-// The family diverged on SHAPE and SEMANTICS, so this projection ships
-// BOTH skins over one shared scalar core:
+// The skins share `Value` and the scalar grammar: the strict fold replays
+// every value through `parseFlat`'s decoder (`decodeWholeScalar`), so the two
+// can never disagree about what a scalar means. Both split physical lines
+// with the tiler's scalar-based `lexLines`, so CRLF reads like LF on either.
+// `parse` rides the lossless tiler (conformance-grade headers / keys);
+// `parseFlat` stays a line scanner BY DESIGN — skip-the-bad-line leniency
+// cannot ride a strict tiler without an error-recovery story nobody needs.
 //
-//   • `parse(_:)  throws -> [String: Value]`   — NESTED, STRICT (chord)
-//   • `parseFlat(_:) -> Document`              — FLAT, LENIENT (the 3)
-//   • `parseWithSpans(_:) throws -> SpannedTree` — the SAME nested strict
-//     tree, derived from the lossless DOM with per-entry/per-header
-//     line+column spans (ParseWithSpans.swift; chord's column-precise
-//     warnings). Since v3 this IS the strict engine: `parse` returns its
-//     `.tree` (the original line-based strict scanner is retired).
+// Grammar boundary of this projection: single-line inline tables; single-
+// AND multi-line arrays (inline `#` comments inside tolerated, trailing
+// comma and empty `[]` accepted); basic strings with exactly the escapes
+// `\" \\ \n \t` (an unknown `\x` yields `x`); literal strings verbatim;
+// Int64 decimal and `0x` hex; Double; bool. Int is tried before float so a
+// bare `2` stays `.int` — the int-vs-double distinction is load-bearing for
+// the consumers' whole-ms vs fractional-knob reads.
 //
-//   • chord wants a NESTED tree + STRICT throwing parse (dotted keys
-//     collapse, nested `[[a.b]]` arrays-of-tables, each AoT row a `Row`
-//     carrying a `SourceSpan` for warning attribution — see Span.swift).
-//   • facet / perch / wand want a FLAT model keyed by the *literal*
-//     header text (`tables["cast.overlay.trail"]`, `arrays["rules"]`)
-//     + LENIENT parsing (a typo loses one line, the daemon survives).
+// Deliberately NOT surfaced: multi-line strings, date/time literals, integer
+// underscores / octal / binary, inf/nan, arrays-of-arrays, emit. The family's
+// configs don't need them on this path; do not widen the grammar here — the
+// full spec is already available in the sibling files:
+//   • lossless DOM: Annotated.swift / AnnotatedParse.swift
+//   • strict typed decode: DecodeStrict.swift / TypedValue.swift / TypedTree.swift
+//   • encode / emit: Serialize.swift / TaggedJSON.swift
 //
-// Both share the same `Value` model and scalar grammar (the strict fold
-// replays every value through `parseFlat`'s decoder — decodeWholeScalar).
-// They differ in WHERE a parsed value lands (a nested tree vs. flat
-// literal-keyed maps), in error policy (throw vs. skip-the-line), and in
-// LINE structure: `parse` rides the lossless tiler (conformance-grade
-// headers/keys), `parseFlat` stays a line scanner BY DESIGN (its leniency
-// can't ride the strict tiler) — but both split physical lines with the
-// tiler's scalar-based `lexLines`, so CRLF is correct on either skin.
-//
-// Surfaced by this projection:
-//   • `key = value` at table/section scope
-//   • dotted keys `a.b.c = …` collapse to nested tables (`parse` only)
-//   • `[table]` / `[sub.section]` headers; nested for `parse`, literal
-//     for `parseFlat`. Quoted segments (`[a."b.c"]`) keep interior dots
-//     and are unquoted (`parse`); `parseFlat` keeps the header verbatim.
-//   • `[[array-of-tables]]` headers, including nested `[[a.b]]`
-//     (`a[last].b` per spec) for `parse`; single-level literal-keyed for
-//     `parseFlat`.
-//   • inline tables `{ a = 1, "q.k" = 2 }` (single-line)
-//   • arrays `[ a, b, c ]`, quote+depth-aware comma split, trailing
-//     comma + empty `[]` tolerated — AND multi-line arrays (elements
-//     spanning physical lines, inline `#` comments inside tolerated)
-//   • scalars: `"…"` (escapes `\" \\ \n \t`, unknown `\x` → `x`),
-//     `'…'` literal (verbatim, no escapes), int (Int64), hex int
-//     `0x…`, float (Double), bool. Int is tried before float so a bare
-//     `2` stays `.int`.
-//   • `#` comments to end of line, quote- AND escape-aware (an
-//     escaped `\"` inside a basic string doesn't end it).
-//   • CRLF, on BOTH skins: they share the tiler's scalar-based `lexLines`
-//     splitter, so a CRLF document reads exactly like its LF twin.
-//
-// This projection deliberately does NOT surface multi-line strings
-// (`"""…"""`), date/time literals, integer underscores/octal/binary,
-// inf/nan, nested arrays-of-arrays, or emit — the family's configs don't
-// need them on this fast path. These are NOT a module limitation: full
-// TOML 1.0 (incl. all of the above, plus byte-identical round-trip and
-// the toml-test ENCODER direction) lives in the sibling files —
-//   • lossless format-preserving DOM: `Annotated.swift` / `AnnotatedParse.swift`
-//   • strict typed decode: `DecodeStrict.swift` / `TypedValue.swift` / `TypedTree.swift`
-//   • encode / emit: `Serialize.swift` / `TaggedJSON.swift`
-//
-// Out-of-range / typed clamping is NOT done here — that policy lives in
-// each app's Config layer, so a typo's blast radius stays one binding.
+// Out-of-range / typed clamping is NOT done here — that policy lives in each
+// app's Config layer, so a typo's blast radius stays one binding.
 
 import Foundation
 
 public enum Toml {
 
-    /// A parsed TOML value. The case set is chord's superset; the three
-    /// flat consumers never construct `.arrayOfTables` and read string
-    /// arrays via `asStringArray` rather than a dedicated case.
-    ///
-    /// `.arrayOfTables` holds `[Row]` (each row's fields + its `[[header]]`
-    /// `SourceSpan`) rather than a bare `[[String: Value]]`, so the nested
-    /// strict `parse` can attribute warnings to a source line without a
-    /// synthetic dict key. Only `parse` constructs it; `parseFlat` keeps its
-    /// rows as plain `[[String: Value]]` in `Document.arrays`.
+    /// A parsed TOML value. `.arrayOfTables` holds `[Row]` (fields + the
+    /// `[[header]]` `SourceSpan`) rather than a bare `[[String: Value]]`, so
+    /// the nested strict `parse` can attribute warnings to a source line
+    /// without a synthetic dict key. Only `parse` constructs it; `parseFlat`
+    /// keeps its rows as plain `[[String: Value]]` in `Document.arrays`.
     public enum Value: Sendable, Equatable {
         case string(String)
         case int(Int64)
@@ -125,13 +97,11 @@ public enum Toml {
     /// to `a[last].b`; every AoT row is a `Row` carrying the `SourceSpan`
     /// of its `[[header]]` (see Span.swift).
     ///
-    /// Since v3 this DELEGATES to `parseWithSpans` — one strict engine, the
-    /// lossless-DOM fold (the original line-based scanner is retired). The
-    /// tree is unchanged; the strictness is the tiler's: CRLF documents
-    /// parse correctly, and garbage the old scanner tolerated (a control
-    /// char in a comment, a `[]` header, an invalid bare key, triple-quoted
-    /// spellings) throws. Callers that also want source locations call
-    /// `parseWithSpans` directly.
+    /// Delegates to `parseWithSpans` — ONE strict engine, so the tree and
+    /// the spans can never disagree. The strictness is the tiler's: a
+    /// control char in a comment, a `[]` header, an invalid bare key and any
+    /// triple-quoted spelling throw (pinned in ParseWithSpansTests). Callers
+    /// that also want source locations call `parseWithSpans` directly.
     public static func parse(_ source: String) throws -> [String: Value] {
         try parseWithSpans(source).tree
     }
@@ -146,15 +116,13 @@ public enum Toml {
     public static func parseFlat(_ source: String) -> Document {
         // Physical lines via the scalar-based `lexLines`, NOT
         // `split(separator: "\n")`: a Swift `Character` folds "\r\n" into one
-        // grapheme, so the Character-based split never fired on a CRLF document
-        // and the whole file arrived here as a single line (every entry then
-        // failed to decode and was leniently dropped). `lexLines` strips the
-        // terminator, so a CRLF document reads exactly like its LF twin.
+        // grapheme, so a Character-based split sees a CRLF document as ONE
+        // line and leniently drops nearly all of it.
         let lines = lexLines(stripBOM(source)).map(\.text)
         var doc = Document()
-        doc.tables[""] = [:]          // top-level scope always present
-        var section = ""              // literal header text; "" = top-level
-        var arrayKey: String? = nil   // non-nil → inside [[arrayKey]]
+        doc.tables[""] = [:]
+        var section = ""
+        var arrayKey: String? = nil
         var i = 0
 
         while i < lines.count {
@@ -163,8 +131,7 @@ public enum Toml {
             i += 1
             if line.isEmpty { continue }
 
-            // [[array-of-tables]] — test the double bracket BEFORE the
-            // single, since `[[x]]` also satisfies the single-bracket test.
+            // `[[x]]` also satisfies the single-bracket test — order matters.
             if line.hasPrefix("[[") && line.hasSuffix("]]") {
                 let name = String(line.dropFirst(2).dropLast(2))
                     .trimmingCharacters(in: .whitespaces)
@@ -207,23 +174,20 @@ public enum Toml {
     }
 
     /// 1-based column of the first non-`space`/`tab` character on `line`
-    /// (i.e. just past the leading indentation) — the `SourceSpan.column`
-    /// for a header. A blank/all-whitespace line yields the column past its
-    /// end; headers are never blank, so that case doesn't arise in practice.
-    /// Internal: the DOM-derived `parseWithSpans` reuses it for its headers.
+    /// (just past the leading indentation) — the `SourceSpan.column` of a
+    /// header. A blank line yields the column past its end; headers are
+    /// never blank, so that case doesn't arise.
     static func leadingColumn(_ line: String) -> Int {
         line.prefix { $0 == " " || $0 == "\t" }.count + 1
     }
 
     // MARK: - Shared scalar / line helpers
 
-    /// Strip an unquoted `#` comment to end of line. A `#` inside a
-    /// `"…"` or `'…'` body is preserved (quote-aware), and an escaped
-    /// quote `\"` inside a BASIC string does not close it — so a `#`
-    /// after a string like `"a \" b"` is still the real comment, not
-    /// swallowed as string interior. Literal `'…'` strings process no
-    /// escapes (a `\` is verbatim), so escape tracking is gated on the
-    /// active quote being `"`.
+    /// Strip an unquoted `#` comment to end of line. Quote-aware, and an
+    /// escaped `\"` inside a BASIC string does not close it — otherwise the
+    /// `#` after `"a \" b"` would be swallowed as string interior and the
+    /// whole binding lost. Escape tracking is gated on the active quote being
+    /// `"` because a literal `'…'` string processes no escapes.
     private static func stripComment(_ s: String) -> String {
         var inStr = false
         var quote: Character = "\""
@@ -250,11 +214,10 @@ public enum Toml {
         return out
     }
 
-    /// If `rhs` opens a multi-line array (`[` with brackets still open),
-    /// pull & comment-strip following physical lines, appending until the
-    /// brackets balance (or EOF). Inline tables stay single-line (a `{`
-    /// that doesn't close is left malformed for `parseValue` to reject).
-    /// An unterminated array runs to EOF — genuinely malformed input.
+    /// Pull following physical lines into an array value until its brackets
+    /// balance (or EOF — an unterminated array is genuinely malformed).
+    /// Inline tables stay single-line on purpose: a `{` that doesn't close is
+    /// left for `parseValue` to reject.
     private static func completeMultilineArray(_ rhs: String,
                                                _ lines: [String],
                                                _ i: inout Int) -> String {
@@ -272,7 +235,6 @@ public enum Toml {
 
     /// Net bracket/brace depth, quote-aware (brackets inside `"…"`/`'…'`
     /// don't count, and an escaped `\"` doesn't close a basic string).
-    /// > 0 means an array/table is still open.
     private static func bracketDepth(_ s: String) -> Int {
         var depth = 0
         var inStr = false
@@ -294,11 +256,8 @@ public enum Toml {
         return depth
     }
 
-    /// Index of the key/value separator `=` — the first `=` that is OUTSIDE a
-    /// `"…"`/`'…'` string, so an `=` inside a quoted key (`"a=b" = 1`) or an
-    /// inline-table entry key is not mistaken for the separator. Mirrors the
-    /// quote/escape tracking of `stripComment` / `splitCommaSeparated`; returns
-    /// nil if there is no top-level `=`.
+    /// The key/value separator: the first `=` OUTSIDE a `"…"`/`'…'` string,
+    /// so an `=` inside a quoted key (`"a=b" = 1`) is not mistaken for it.
     private static func firstTopLevelEquals(_ s: String) -> String.Index? {
         var inStr = false
         var quote: Character = "\""
@@ -323,7 +282,6 @@ public enum Toml {
             return .string(unescape(String(raw.dropFirst().dropLast())))
         }
         if raw.hasPrefix("'") && raw.hasSuffix("'") && raw.count >= 2 {
-            // Literal string — body verbatim, no escape processing.
             return .string(String(raw.dropFirst().dropLast()))
         }
         if raw == "true" { return .bool(true) }
@@ -337,7 +295,6 @@ public enum Toml {
             return .array(try items.map { try parseValue($0, lineNo: lineNo) })
         }
         if raw.hasPrefix("{") {
-            // Single-line inline table: `{ key = value, "quoted key" = v }`.
             guard raw.hasSuffix("}") else {
                 throw ParseError(line: lineNo, message: "unterminated inline table")
             }
@@ -359,7 +316,7 @@ public enum Toml {
         if raw.hasPrefix("0x"), let i = Int64(raw.dropFirst(2), radix: 16) {
             return .int(i)
         }
-        if let i = Int64(raw) { return .int(i) }    // int before double
+        if let i = Int64(raw) { return .int(i) }
         if let d = Double(raw) { return .double(d) }
         throw ParseError(line: lineNo, message: "unrecognised value '\(raw)'")
     }
@@ -399,24 +356,22 @@ public enum Toml {
         return out
     }
 
-    /// Split a dotted key/header on top-level dots, keeping quoted
-    /// segments intact (`a."b.c"` → `[a, "b.c" unquoted]`) and unquoting
-    /// each segment. Plain `a.b.c` → `[a, b, c]` (identical to a naive
-    /// split, so chord's quote-free paths are unchanged).
-    /// Internal: `parseWithSpans` re-lexes keys through this SAME finisher so
-    /// the derived tree keeps the projection's literal-escape key semantics.
+    /// The LOSSY dotted-path finisher: split on top-level dots, keeping quoted
+    /// segments intact (`a."b.c"` → `["a", "b.c"]`), and strip each segment's
+    /// quote pair WITHOUT decoding escapes. `parseWithSpans` re-lexes keys
+    /// through this same finisher so the derived tree keeps the projection's
+    /// literal-escape key identity (see `scanDottedSegments`).
     static func splitDottedPath(_ s: String) -> [String] {
         scanDottedSegments(s).map { unquoteKey($0.trimmingCharacters(in: .whitespaces)) }
     }
 
-    /// Split a dotted key / header on top-level dots, keeping quoted segments
-    /// intact (`a."b.c"` → `["a", "\"b.c\""]`) — the RAW, still-quoted,
-    /// whitespace-included segments. Callers apply their own per-segment
-    /// unquote policy: the lossy projection keeps escapes literal
-    /// (`unquoteKey`), the lossless DOM lookup decodes them (`AnnotatedParse`'s
-    /// `lexUnquoteKey`). One scanner, two finishers — see LossyProjectionTests
-    /// / ReviewFixesTests for the pinned escape-decode divergence (do NOT
-    /// collapse the two finishers into one).
+    /// Split a dotted key / header on top-level dots into the RAW,
+    /// still-quoted, whitespace-included segments. One scanner, TWO
+    /// finishers: the lossy projection keeps escapes literal (`unquoteKey`),
+    /// the lossless DOM lookup decodes them (`lexUnquoteKey`). Do NOT collapse
+    /// the finishers into one — the divergence is a pinned consumer contract
+    /// (LossyProjectionTests.lossyKeyEscapesStayLiteral /
+    /// ReviewFixesTests.dottedPathLookupDecodesKeyEscapes).
     static func scanDottedSegments(_ s: String) -> [String] {
         var segs: [String] = []
         var cur = ""
@@ -441,8 +396,8 @@ public enum Toml {
         return segs
     }
 
-    /// Strip a matching surrounding quote pair (`"…"` or `'…'`) from a
-    /// key. Leaves an unquoted key untouched.
+    /// Strip a matching surrounding quote pair from a key; escapes inside
+    /// stay literal (the lossy finisher — see `scanDottedSegments`).
     private static func unquoteKey(_ raw: String) -> String {
         if raw.count >= 2 {
             let f = raw.first!, l = raw.last!
@@ -453,9 +408,9 @@ public enum Toml {
         return raw
     }
 
-    /// Decode the four minimal escapes in a double-quoted body; an
-    /// unknown escape `\x` emits `x` (drops the backslash) — the superset
-    /// of chord's fixed-set and perch's char-walker behaviours.
+    /// Decode the four escapes in a double-quoted body; an unknown escape
+    /// `\x` emits `x`. This is the union of what the consumers' former
+    /// per-app parsers accepted, so no existing config changes meaning.
     private static func unescape(_ body: String) -> String {
         var out = ""
         var it = body.makeIterator()
@@ -477,25 +432,18 @@ public enum Toml {
 
     // MARK: - Nested write / array-of-tables drill (chord)
 
-    // Each function is a single self-recursive walk: the former outer
-    // wrapper differed from its `*Inner` twin only by a leading
-    // `guard !path.isEmpty` (the recursion always passes a non-empty
-    // `dropFirst` slice), so the pairs collapse to one function each.
-    //
-    // Internal (not private): these are the WRITERS of the strict nested
-    // tree — `parseWithSpans`'s DOM fold (and therefore `parse`) builds
-    // through them. They carried `parse`'s tree semantics verbatim across
-    // the line-scanner retirement — do not fork them.
+    // Internal (not private): the WRITERS of the strict nested tree —
+    // `parseWithSpans`'s DOM fold (and therefore `parse`) builds through
+    // them. Do not fork them: the tree semantics `parse` promises live here.
+    // All three drill into an array-of-tables' LAST element on the way
+    // (TOML 1.0: `[aot.sub]` and `[[aot.sub]]` bind to the most recent
+    // element); overwriting the AoT node with a fresh table would drop the
+    // array and every field already written to that element.
 
     static func write(_ table: inout [String: Value],
                       path: [String], value: Value) {
         guard !path.isEmpty else { return }
         if path.count == 1 { table[path[0]] = value; return }
-        // When `path[0]` already names an array-of-tables, a std sub-table
-        // header (`[aot.sub]`) targets the LAST element per TOML 1.0, so drill
-        // into its fields — NOT overwrite the AoT node with a fresh table
-        // (which would drop the array AND every field written to that element).
-        // Mirrors appendArrayOfTablesRow / writeIntoArrayOfTablesRow.
         if case .arrayOfTables(var rows) = table[path[0]], !rows.isEmpty {
             var last = rows[rows.count - 1]
             write(&last.fields, path: Array(path.dropFirst()), value: value)
@@ -519,8 +467,6 @@ public enum Toml {
             table[path[0]] = .arrayOfTables(rows)
             return
         }
-        // `[[a.b]]` appends to `a[last].b`: when `a` is already an AoT,
-        // drill into its last row's fields rather than shadowing it.
         if case .arrayOfTables(var rows) = table[path[0]], !rows.isEmpty {
             var last = rows[rows.count - 1]
             appendArrayOfTablesRow(&last.fields, path: Array(path.dropFirst()), span: span)
@@ -565,15 +511,12 @@ public enum Toml {
 // MARK: - Convenience accessors
 
 public extension Toml.Value {
-    /// Only `.string`.
     var asString: String? { if case .string(let s) = self { return s }; return nil }
-    /// Only `.int`, returned as a native `Int` (the family field width).
-    /// Does NOT coerce `.double`/`.bool` — int-vs-double discrimination
-    /// is load-bearing for well-formed-ms vs fractional-knob reads.
+    /// Does NOT coerce `.double`/`.bool`: int-vs-double discrimination is
+    /// load-bearing for the consumers' whole-ms vs fractional-knob reads.
     var asInt: Int? { if case .int(let i) = self { return Int(truncatingIfNeeded: i) }; return nil }
-    /// Only `.int`, as the stored `Int64` (chord's raw-width escape hatch).
     var asInt64: Int64? { if case .int(let i) = self { return i }; return nil }
-    /// `.double` passthrough; `.int` widened to `Double`.
+    /// `.int` is widened to `Double`; the reverse never happens (see `asInt`).
     var asDouble: Double? {
         switch self {
         case .double(let d): return d
@@ -581,20 +524,15 @@ public extension Toml.Value {
         default:             return nil
         }
     }
-    /// Only `.bool`.
     var asBool: Bool? { if case .bool(let b) = self { return b }; return nil }
-    /// The generic array.
     var asArray: [Toml.Value]? { if case .array(let a) = self { return a }; return nil }
-    /// `.array` projected to its string elements (non-strings dropped) —
-    /// the replacement for the old per-app `.stringArray` case.
+    /// Non-string elements are dropped, not an error — the lenient consumers
+    /// read string lists this way and must survive a stray element.
     var asStringArray: [String]? {
         if case .array(let a) = self { return a.compactMap(\.asString) }
         return nil
     }
-    /// Inline / nested table.
     var asTable: [String: Toml.Value]? { if case .table(let t) = self { return t }; return nil }
-    /// Array of tables — each element a `Row` (its fields + the `[[header]]`
-    /// `SourceSpan`). Read `row["key"]` for fields, `row.span` for location.
     var asArrayOfTables: [Toml.Row]? {
         if case .arrayOfTables(let r) = self { return r }; return nil
     }

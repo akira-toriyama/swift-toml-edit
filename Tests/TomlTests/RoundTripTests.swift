@@ -3,13 +3,12 @@ import Foundation
 @testable import Toml
 
 // The core invariant of the lossless DOM: parse → render is byte-for-byte
-// identical for anything we can parse. Covered by micro-fixtures (one per M1
-// construct) and the family's six real config.toml files (the goldens that
-// gate the consumer swap). Named `RoundTrip*` so CI can isolate the check.
+// identical for anything we can parse. Covered by micro-fixtures (one per
+// construct) and the family's real config.toml goldens. Named `RoundTrip*` so
+// CI can isolate the check.
 
 @Suite struct RoundTripTests {
 
-    /// Parse `s` into the lossless DOM and assert it serializes back unchanged.
     private func check(_ s: String, _ note: Comment? = nil, sourceLocation: SourceLocation = #_sourceLocation) throws {
         let doc = try Toml.Annotated(parsing: s)
         let out = doc.render()
@@ -24,7 +23,7 @@ import Foundation
         return try String(contentsOf: url, encoding: .utf8)
     }
 
-    // MARK: - Micro-fixtures (one per M1 construct)
+    // MARK: - Micro-fixtures (one per construct)
 
     @Test func empty() throws { try check("") }
     @Test func onlyNewline() throws { try check("\n") }
@@ -77,11 +76,9 @@ import Foundation
     }
 
     @Test func numericDottedHeaderAndInlineTable() throws {
-        // A neutral shape on purpose: no family config ships an inline table
-        // any more, so this case (and the fuzz grammar) is the construct's only
-        // guard. It used to be spelled as facet's `[desktop.1]` workspace list,
-        // which facet retired — keeping that spelling would have it read as
-        // live vocabulary.
+        // A neutral shape on purpose: no family config ships an inline table,
+        // so this case (and the fuzz grammar) is the construct's only guard,
+        // and spelling it in a consumer's vocabulary would read as live usage.
         try check("""
         [panel.1]
         1 = { name = "Dev" }
@@ -157,8 +154,7 @@ import Foundation
     }
 
     @Test func crlfLineEndings() throws {
-        // CRLF must be preserved per line (byte-identity), even though the
-        // family configs are LF-only.
+        // The family configs are LF-only, so nothing else exercises CRLF.
         try check("# c\r\n[s]\r\nx = 1\r\n")
     }
 
@@ -174,7 +170,7 @@ import Foundation
         try check(#"cmd = 'cd ~/repo && git switch "{line}"'"# + "\n")
     }
 
-    // MARK: - Real config goldens (the family's six shipped config.toml files,
+    // MARK: - Real config goldens (the family's shipped config.toml files,
     // plus the hand-written facet sections fixture the edit ops are pinned to)
 
     @Test func roundTripStill() throws { try check(try fixture("still")) }
@@ -203,22 +199,18 @@ import Foundation
         [[exclude]]
         app = "B"
         """)
-        // doc-level leading holds the pragma + file header (never moves)
         #expect(doc.leading.contains("#:schema"))
-        // top-level keyval before the first header
         #expect(doc.root.entry(forKey: "top")?.value == .int(1))
-        // blocks in order: [border], [[exclude]], [[exclude]]
         #expect(doc.blocks.count == 3)
         #expect(doc.blocks[0].kind == .table)
         #expect(doc.blocks[0].path == ["border"])
         #expect(doc.blocks[1].kind == .arrayElement)
         #expect(doc.blocks[1].path == ["exclude"])
         #expect(doc.blocks[2].kind == .arrayElement)
-        // the comment banner attaches to [border] (moves with it on edit); the
-        // blank-line separator before it stayed with the previous block.
+        // The wand#129 split: the banner is [border]'s leading, the blank-line
+        // separator before it stayed with the root body.
         #expect(doc.blocks[0].leading == "# the border section\n")
         #expect(doc.root.trailing.contains("\n"))
-        // entry value decode on demand
         #expect(doc.blocks[0].body.entry(forKey: "effect")?.value == .string("neon"))
     }
 }

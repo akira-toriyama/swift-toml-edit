@@ -1,4 +1,4 @@
-// The strict, fully-typed value model — the M2 decode layer's output.
+// The strict, fully-typed value model — the strict decode layer's output.
 //
 // This is deliberately SEPARATE from the lossy `Toml.Value` (in Toml.swift),
 // which is the frozen, consumer-facing projection the five family apps import:

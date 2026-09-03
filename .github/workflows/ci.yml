@@ -3,8 +3,8 @@ name: ci
 # REAL CI for swift-toml-edit — the atelier family's only repo with a genuine
 # correctness gate (sill itself has none). Build + test on macOS AND Linux.
 # A pure, zero-dep, Foundation-only TOML library must prove Linux parity, so
-# the Linux job is first-class (and runs the upcoming `toml-test` conformance
-# suite cheaply, without macOS minutes). The round-trip byte-identity goldens
+# the Linux job is first-class (and runs the `toml-test` conformance suite
+# cheaply, without macOS minutes). The round-trip byte-identity goldens
 # over the family's real configs run inside `swift test`, so both jobs gate them.
 #
 # This is deliberately NOT the family app build.yml (the macOS-only composite

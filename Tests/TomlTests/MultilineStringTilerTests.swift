@@ -2,16 +2,14 @@ import Testing
 import Foundation
 @testable import Toml
 
-// M2: the lossless tiler must handle multi-line strings (`"""`/`'''`).
-// Before this, a value opening a triple quote made `Toml.Annotated(parsing:)`
-// THROW (`expected '='` on the body line) or mis-tile body lines as phantom
-// headers / key=values.
+// The lossless tiler over multi-line strings (`"""`/`'''`), whose body lines
+// can look exactly like headers / key=values.
 //
-// CRITICAL: round-trip byte-identity is NECESSARY BUT NOT SUFFICIENT here — a
-// mis-tiled body line can still concatenate back to the same bytes by luck
-// while the DOM is structurally wrong (a phantom Block/Entry), which would
-// corrupt any later edit or decode. So these tests assert the DOM SHAPE (entry
-// / block counts, keys, no phantom nodes), not just `render() == source`.
+// Round-trip byte-identity is NECESSARY BUT NOT SUFFICIENT here: a mis-tiled
+// body line can still concatenate back to the same bytes while the DOM is
+// structurally wrong (a phantom Block / Entry), which corrupts any later edit
+// or decode. So these tests assert the DOM SHAPE (entry / block counts, keys,
+// no phantom nodes), not just `render() == source`.
 @Suite struct MultilineStringTilerTests {
 
     private func parsed(_ s: String, _ loc: SourceLocation = #_sourceLocation) throws -> Toml.Annotated {
@@ -20,7 +18,7 @@ import Foundation
         return doc
     }
 
-    // Build a TOML doc from lines (avoids escaping `"""` inside a Swift literal).
+    // Line-wise construction avoids escaping `"""` inside a Swift literal.
     private func toml(_ lines: String...) -> String { lines.joined(separator: "\n") + "\n" }
 
     // MARK: - Body lines that LOOK like structure must NOT become phantom nodes
@@ -28,13 +26,12 @@ import Foundation
     @Test func basicBodyLooksLikeHeaderAndKeyval() throws {
         let s = toml(
             #"x = """"#,           // x = """
-            "[not a header]",       // would be a phantom [table] under the old tiler
+            "[not a header]",
             "a = 1   # not a comment, not an entry",
             "]] also not a header",
             #"""""#                 // """
         )
         let doc = try parsed(s)
-        // Exactly ONE top-level entry `x`, ZERO blocks (no phantom headers).
         #expect(doc.root.entries.count == 1)
         #expect(doc.blocks.isEmpty)
         #expect(doc.root.entries[0].key == ["x"])
@@ -57,8 +54,7 @@ import Foundation
     // MARK: - The trailing-quote close rule (up to two quotes before the close)
 
     @Test func basicTrailingQuotesAndEscapes() throws {
-        // From toml-test valid/string/multiline-quotes: one = """"one quote"""",
-        // five-quotes closes with """"" , escaped uses \" then "" then close.
+        // Shapes from toml-test valid/string/multiline-quotes.
         let s = toml(
             #"one = """"one quote""""#,
             "five = \"\"\"",
@@ -73,7 +69,6 @@ import Foundation
     }
 
     @Test func literalTrailingQuotes() throws {
-        // '''' 'one quote' '''' style + a 5-quote close.
         let s = toml(
             "lit_one = ''''one quote''''",
             "this = ''''",
@@ -119,7 +114,6 @@ import Foundation
             "y = 2"
         )
         let doc = try parsed(s)
-        // Two real blocks [a] and [b]; [a] has entries doc, k; no phantom block.
         #expect(doc.blocks.count == 2)
         #expect(doc.blocks[0].path == ["a"])
         #expect(doc.blocks[1].path == ["b"])
@@ -131,7 +125,7 @@ import Foundation
 
     @Test func crlfInMultilineBody() throws {
         let s = "x = \"\"\"\r\nline1\r\nline2\r\n\"\"\"\r\nafter = 1\r\n"
-        let doc = try parsed(s)   // parsed() asserts byte-identical round-trip
+        let doc = try parsed(s)
         #expect(doc.root.entries.count == 2)
         #expect(doc.blocks.isEmpty)
     }
@@ -168,18 +162,17 @@ import Foundation
 
     // The lenient decode rides parseFlat, whose naive quote model closes a
     // triple quote early and fabricates a plausible fragment (`"""` read as
-    // the one-char string `"`). The tiler DOES hand multi-line string
-    // spellings to `valueText`, so without the up-front rejection the
-    // fabricated value reaches the public `Entry.value` — which documents
-    // "nil outside the M1 scalar grammar". Byte-identical round-trip must
-    // survive alongside the nil.
+    // the one-char string `"`). The tiler DOES hand such spellings to
+    // `valueText`, so without the up-front rejection the fabricated value
+    // reaches the public `Entry.value`, which promises nil outside the lossy
+    // grammar.
     @Test func entryValueNilForMultilineStringSpellings() throws {
         for s in [
             "a = \"\"\"\nhello\n\"\"\"\n",
             "a = \"\"\"hello\"\"\"\n",
             "a = '''\nhi\n'''\n",
         ] {
-            let doc = try parsed(s)   // parsed() asserts byte-identical round-trip
+            let doc = try parsed(s)
             let e = try #require(doc.root.entries.first)
             #expect(e.value == nil,
                     "fabricated \(String(describing: e.value)) for \(s.debugDescription)")

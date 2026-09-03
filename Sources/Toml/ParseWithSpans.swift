@@ -1,47 +1,36 @@
-// parseWithSpans — the lossy nested strict parse, derived from the lossless
-// `Annotated` DOM, with per-entry / per-header source locations (chord#159).
-// Since v3 this is the ONE strict engine: `Toml.parse` returns this fold's
-// `.tree` (the original line-based scanner is retired).
-//
-// This is the post-M2 unification the module gated on the lossless parser
-// passing full toml-test (it does — CI runs the official suite): tile the
+// parseWithSpans — the ONE strict engine of the lossy projection: tile the
 // document with `Annotated(parsing:)` and FOLD the DOM into the nested
-// `[String: Value]` tree the strict `parse` always produced, using the SAME
-// proven write helpers (`write` / `appendArrayOfTablesRow` /
-// `writeIntoArrayOfTablesRow`). Because rendering an unedited DOM is
-// byte-identical to the source, each node's line/column is derived exactly by
-// accumulating the newlines of the raw spans walked so far — no coordinates
-// are stored in the DOM (edits would stale them).
+// `[String: Value]` tree through the shared write helpers (`write` /
+// `appendArrayOfTablesRow` / `writeIntoArrayOfTablesRow`), recording each
+// entry's / header's line+column on the way. `Toml.parse` returns this fold's
+// `.tree`. Because rendering an unedited DOM is byte-identical to the source,
+// each node's line is derived exactly by counting the newlines of the raw
+// spans walked so far — no coordinates are stored in the DOM, because an
+// edit would stale them.
 //
-// The derivation preserves the LOSSY projection's semantics, not the strict
+// The fold preserves the LOSSY projection's semantics, not the strict
 // decoder's:
 //   • keys are re-lexed from the raw spelling with the lossy finisher
 //     (`splitDottedPath`), so quoted-key escapes stay LITERAL — the pinned
-//     `parse` behavior (see `lossyKeyEscapesStayLiteral`), NOT the DOM's
+//     consumer contract (`lossyKeyEscapesStayLiteral`) — NOT the DOM's
 //     escape-decoded `Entry.key` / `Block.path`;
-//   • values go through the same M1 scalar grammar (`decodeScalar`), so a
-//     datetime or a real multi-line string still throws `unrecognised value`;
+//   • values replay through the lossy scalar grammar (`decodeWholeScalar`),
+//     so a datetime or a multi-line string throws `unrecognised value`;
 //   • duplicate keys last-write-win; redefinition is NOT policed (that is
-//     `typedTree()`'s job, not the lossy projection's).
+//     `typedTree()`'s job).
 //
-// The fold's strict-parse contract at the points where it deliberately
-// diverged from the retired line scanner (each pinned in ParseWithSpansTests;
-// all in the correct-TOML direction):
-//   • CRLF terminators: documents parse correctly (multi-line arrays
-//     included — the retired scanner's Character-based split folded "\r\n"
-//     and threw on any multi-entry CRLF document). The reverse arm: a raw
-//     CRLF *inside* a single-line string is split by the tiler into an
-//     unterminated string and throws;
-//   • triple-quoted spellings: any `"""`/`'''` string SPELLING in a value
-//     throws `unrecognised value` — the M1 grammar has no multi-line strings
-//     (the datetime stance). This is also the stability boundary: past a
-//     triple quote naive quote models disagree (quote runs ≥ 4,
-//     `#`-after-parity), and a lenient read would make this fold silently
-//     drop over-consumed lines — rejecting is the only contract that cannot
-//     silently misparse;
-//   • strictness inherited from the tiler rejects documents the old scanner
-//     silently tolerated: a control char in a comment (lexValidateComment), a
-//     degenerate header like `[]`, an invalid bare key (lexDottedPathStrict).
+// Strictness contract (pinned in ParseWithSpansTests):
+//   • CRLF documents parse, multi-line arrays included; a raw CRLF *inside*
+//     a single-line string is split by the tiler into an unterminated string
+//     and throws — string interiors are never space-joined or rewritten;
+//   • any `"""`/`'''` SPELLING in a value throws, not just a real multi-line
+//     string: past a triple quote the naive quote model and `lexScanQuoted`
+//     disagree (quote runs ≥ 4, `#`-after-parity), so a lenient read would
+//     silently drop over-consumed lines. Rejecting is the only contract that
+//     cannot misparse;
+//   • the tiler's strictness applies: a control char in a comment
+//     (`lexValidateComment`), a `[]` header and an invalid bare key
+//     (`lexDottedPathStrict`) throw.
 //
 // Span conventions (all 1-based, columns in Unicode scalars):
 //   • an ENTRY records its key's first character and its value's first
@@ -93,8 +82,7 @@ public extension Toml {
     /// index the tree itself cannot carry (the tree's Equatable identity is
     /// plain `[String: Value]` — span data lives beside it, never inside it).
     struct SpannedTree: Sendable, Equatable {
-        /// The nested root — exactly what `Toml.parse(source)` returns
-        /// (`parse` delegates here since v3).
+        /// The nested root — exactly what `Toml.parse(source)` returns.
         public var tree: [String: Value]
         /// Leaf-path → key/value locations, one per surviving assignment.
         public var entrySpans: [[PathSegment]: EntrySpans]
@@ -116,10 +104,9 @@ public extension Toml {
         public func headerSpan(_ path: PathSegment...) -> SourceSpan? { headerSpans[path] }
     }
 
-    /// Parse into the SAME nested strict tree as `parse(_:)`, deriving it from
-    /// the lossless `Annotated` DOM, and additionally report where every
-    /// surviving assignment and header lives (line + column) — the input for
-    /// column-precise `(config.toml:N:C)` diagnostics.
+    /// `parse(_:)`'s tree plus where every surviving assignment and header
+    /// lives (line + column) — the input for column-precise
+    /// `(config.toml:N:C)` diagnostics.
     static func parseWithSpans(_ source: String) throws -> SpannedTree {
         let dom = try Annotated(parsing: source)
 
@@ -127,20 +114,18 @@ public extension Toml {
         var entrySpans: [[PathSegment]: EntrySpans] = [:]
         var headerSpans: [[PathSegment]: SourceSpan] = [:]
 
-        // Line derivation: render() of an unedited DOM is byte-identical to
-        // `source`, so walking the raw spans in document order and counting
-        // newlines yields each construct's exact 1-based physical line. ("\n"
-        // is counted on Unicode scalars — a CRLF terminator contains one.)
+        // "\n" is counted on Unicode scalars — a CRLF terminator contains one,
+        // whereas a Character-level count would fold it away.
         var newlinesConsumed = 0
         func advance(_ s: String) {
             for u in s.unicodeScalars where u == "\n" { newlinesConsumed += 1 }
         }
         func currentLine() -> Int { newlinesConsumed + 1 }
 
-        // The tree path an assignment/header LANDED on, indices included:
-        // replays the write helpers' drill choice read-only, against the
-        // just-written tree — an array-of-tables node on the way resolves to
-        // its LAST element, exactly like `write` / `appendArrayOfTablesRow`.
+        // The tree path an assignment / header LANDED on, indices included.
+        // Must replay the write helpers' drill choice exactly (an AoT node on
+        // the way resolves to its LAST element), or spans would key a path
+        // the tree never wrote.
         func attributedPath(_ segments: [String]) -> [PathSegment] {
             var out: [PathSegment] = []
             out.reserveCapacity(segments.count + 2)
@@ -166,9 +151,9 @@ public extension Toml {
             let line = currentLine()
             let scalars = Array(e.raw.unicodeScalars)
 
-            // Key + value columns on the entry's first physical line (a value
-            // never STARTS on a continuation line: the tiler only continues a
-            // value that already opened a bracket or multi-line string).
+            // Both columns are on the entry's first physical line: a value
+            // never STARTS on a continuation line, because the tiler only
+            // continues a value that already opened a bracket or string.
             var k = 0
             while k < scalars.count, scalars[k] == " " || scalars[k] == "\t" { k += 1 }
             let keyColumn = k + 1
@@ -179,32 +164,26 @@ public extension Toml {
             while v < scalars.count, scalars[v] == " " || scalars[v] == "\t" { v += 1 }
             let valueColumn = v + 1
 
-            // LOSSY key semantics: re-lex the raw spelling with the projection's
-            // finisher (escapes stay literal), not the DOM's decoded `e.key`.
+            // Re-lex the raw spelling with the LOSSY finisher (escapes stay
+            // literal), not the DOM's decoded `e.key` — see the file head.
             let keyText = String(String.UnicodeScalarView(scalars[0..<eq]))
             let keyParts = splitDottedPath(keyText.trimmingCharacters(in: .whitespaces))
 
-            // M1 value grammar. A triple-quoted string SPELLING anywhere in
-            // the value is out of grammar (like a datetime) — and past it the
-            // naive scalar-replay and lex quote models disagree, so
-            // garbage-tolerating would silently misparse. Reject up front.
+            // Triple-quoted spellings are rejected up front, before the replay
+            // can fabricate a fragment — see the file head.
             var valueText = e.valueText
             if containsMultilineStringSpelling(valueText) {
                 throw ParseError(line: line, message: "unrecognised value '\(valueText)'")
             }
-            // Only a multi-line ARRAY may span physical lines (a line-broken
-            // inline table etc. is out of grammar). The test is "\n" ONLY: a
-            // LONE raw CR is not a line terminator — it flows to the decode,
-            // which tolerates it as the shared scalar grammar always has.
+            // Only a multi-line ARRAY may span physical lines. The test is
+            // "\n" ONLY: a LONE raw CR is not a line terminator — it flows to
+            // the decode, which tolerates it as the shared grammar always has.
             if valueText.unicodeScalars.contains("\n") {
                 guard valueText.hasPrefix("[") else {
                     throw ParseError(line: line, message: "unrecognised value '\(valueText)'")
                 }
                 valueText = try normalizedMultilineArrayValue(valueText, line: line)
             }
-            // Whole-value replay: any spelling the shared scalar grammar
-            // cannot consume as ONE value throws here — never a silent
-            // partial parse.
             guard let value = decodeWholeScalar(valueText) else {
                 throw ParseError(line: line, message: "unrecognised value '\(valueText)'")
             }
@@ -221,7 +200,7 @@ public extension Toml {
             advance(e.raw)
         }
 
-        advance(dom.leading)                       // BOM + pragma + file header
+        advance(dom.leading)
         for e in dom.root.entries {
             try foldEntry(e, blockPath: [], inAoT: false)
         }
@@ -233,9 +212,9 @@ public extension Toml {
             let headerText = lexLines(block.headerRaw).first?.text ?? ""
             let headerColumn = leadingColumn(headerText)
 
-            // LOSSY header path, same finisher as the entry keys. The bracket
-            // shape is already tiler-validated, so dropping the delimiters of
-            // the comment-stripped, trimmed line is safe.
+            // Same lossy finisher as the entry keys. Dropping the delimiters
+            // blindly is safe only because the tiler already validated the
+            // bracket shape.
             let code = lexStripComment(headerText)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             let inner: String
@@ -267,9 +246,9 @@ public extension Toml {
 extension Toml {
 
     /// Whether a value spelling contains a triple-quoted (`"""` / `'''`)
-    /// string — the multi-line string grammar the M1 projection excludes.
-    /// Everything past such an opener is where a naive quote model and
-    /// `lexScanQuoted` can disagree, so the fold rejects it up front.
+    /// string. Everything past such an opener is where the lossy grammar's
+    /// naive quote model and `lexScanQuoted` can disagree, so the lossy
+    /// decoders reject it up front instead of fabricating a fragment.
     static func containsMultilineStringSpelling(_ s: String) -> Bool {
         let a = Array(s.unicodeScalars)
         var i = 0
@@ -289,18 +268,17 @@ extension Toml {
     /// Prepare a multi-line ARRAY value for the scalar-grammar replay:
     /// normalize CRLF terminators to LF — only OUTSIDE string spans, so string
     /// content is never rewritten — and throw on a raw CR left INSIDE a string
-    /// span (invalid TOML; the replay cannot reproduce that spelling, so failing
-    /// loudly beats silently misparsing).
+    /// span (invalid TOML; the replay cannot reproduce that spelling, so
+    /// failing loudly beats silently misparsing).
     ///
-    /// DO NOT "simplify" this away as redundant now that `parseFlat`'s splitter
-    /// is scalar-based (it reads CRLF correctly by itself). This function is the
-    /// SOLE reason a CR never reaches the strict fold's replay: the fold is
-    /// sequential — a value with an interior newline must start with `[` or the
-    /// fold throws, and every such value comes through here — so the two halves
-    /// below are the only CR filter on the strict path. Measured: 0 of 8014
-    /// replayed spellings (3000 mixed-terminator fuzz docs + all 7 real-config
-    /// fixtures + their CRLF twins) carry even one CR. Delete either half and
-    /// invalid raw-CR-in-string arrays start decoding instead of throwing.
+    /// DO NOT "simplify" this away as redundant because `parseFlat`'s splitter
+    /// reads CRLF correctly by itself. This function is the SOLE CR filter on
+    /// the strict path: every value with an interior newline comes through
+    /// here (or throws). The guard is invisible to the fuzz corpus — measured
+    /// 0 of 8014 replayed spellings (3000 mixed-terminator fuzz docs + the 7
+    /// real-config fixtures + their CRLF twins) carry a CR — so a green suite
+    /// after deleting either half proves nothing; invalid raw-CR-in-string
+    /// arrays would start decoding instead of throwing.
     static func normalizedMultilineArrayValue(_ s: String, line: Int) throws -> String {
         let a = Array(s.unicodeScalars)
         var out = String.UnicodeScalarView()
@@ -329,12 +307,12 @@ extension Toml {
     }
 
     /// Decode a value spelling through the shared scalar grammar, requiring
-    /// the replay to consume it WHOLE: `parseFlat` parses `__v__ = <text>`, and
-    /// anything in the synthetic document beyond that single binding means the
-    /// naive model closed the value early (an out-of-grammar spelling) — nil,
-    /// so the fold throws instead of silently dropping the over-consumed tail.
-    /// (`decodeScalar` — `Annotated.Entry.value`'s lenient sibling — has no
-    /// wholeness requirement; the fold deliberately does.)
+    /// the replay to consume it WHOLE: anything in the synthetic `__v__ =
+    /// <text>` document beyond that single binding means the naive model
+    /// closed the value early (an out-of-grammar spelling) — nil, so the fold
+    /// throws instead of silently dropping the over-consumed tail.
+    /// `decodeScalar` (`Annotated.Entry.value`'s lenient sibling) has no
+    /// wholeness requirement; the strict fold deliberately does.
     static func decodeWholeScalar(_ text: String) -> Toml.Value? {
         let doc = Toml.parseFlat("__v__ = \(text)")
         guard doc.arrays.isEmpty,

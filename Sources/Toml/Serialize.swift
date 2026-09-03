@@ -29,8 +29,6 @@ public extension Toml.TypedValue {
         return out
     }
 
-    /// Append this value in inline form (`{…}` for tables, `[…]` for arrays,
-    /// a literal for scalars).
     fileprivate func appendInline(to out: inout String) {
         switch self {
         case .string(let s):         out += Toml.encodeBasicString(s)
@@ -62,23 +60,21 @@ public extension Toml.TypedValue {
 }
 
 public extension Toml {
-    /// Serialize one lossy `Toml.Value` to its TOML value-token spelling —
-    /// the public value serializer the per-element edit ops build a new
-    /// entry `raw` from (v2.1.0). One wrapper over the internal spellings so
-    /// a consumer never re-implements the case switch:
+    /// The value-token spelling of a lossy `Toml.Value` — what the edit ops
+    /// write into an entry's `raw`. The spellings are a contract the edit
+    /// tests pin:
     ///
-    ///   `.string` → a basic string (always double-quoted, TOML escapes
-    ///               applied — the ONE quoting style emitted)
+    ///   `.string` → a basic string, the ONE quoting style emitted (so an
+    ///               edit may change a literal string's quoting)
     ///   `.int` / `.bool` → their literal spellings
     ///   `.double` → `canonicalFloat` (always float-shaped; `inf`/`nan`
     ///               spelled out)
     ///   `.array` → single-line `[a, b]`; `[]` when empty
-    ///   `.table` → a single-line inline table with KEYS SORTED (the dict is
-    ///              unordered; sorting keeps the output deterministic)
-    ///   `.arrayOfTables` → OUT of the v2.1.0 contract (only chord's nested
-    ///              `parse` constructs it in value position); encoded
-    ///              best-effort as an array of inline tables, which decodes
-    ///              back to equivalent data
+    ///   `.table` → a single-line inline table with KEYS SORTED — the dict is
+    ///              unordered, and the output must be byte-stable across runs
+    ///   `.arrayOfTables` → not a supported input (only the nested `parse`
+    ///              constructs it); encoded best-effort as an array of inline
+    ///              tables, which decodes back to equivalent data
     static func encode(_ value: Toml.Value) -> String {
         switch value {
         case .string(let s):  return encodeBasicString(s)

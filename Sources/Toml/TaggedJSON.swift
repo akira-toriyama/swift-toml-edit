@@ -15,7 +15,6 @@
 import Foundation
 
 public extension Toml.TypedValue {
-    /// This value as toml-test tagged JSON.
     func taggedJSON() -> String {
         var s = ""
         write(into: &s)
@@ -103,8 +102,8 @@ extension Toml {
             if value == "false" { return .boolean(false) }
             throw ParseError(line: 0, message: "invalid bool value '\(value)'")
         case "integer":
-            // The .json uses decimal spelling; fall back to the strict decoder
-            // for any radix-prefixed form.
+            // The corpus spells integers in decimal; the strict-decoder
+            // fallback covers a radix-prefixed form.
             if let i = Int64(value) { return .integer(i) }
             if case .integer(let i) = try decodeStrict(value) { return .integer(i) }
             throw ParseError(line: 0, message: "invalid integer value '\(value)'")
@@ -117,16 +116,16 @@ extension Toml {
             case "-inf":               return .float(-.infinity)
             case "nan", "+nan", "-nan": return .float(.nan)
             default:
-                // A finite literal that overflows binary64 parses to `inf`;
-                // reject it (the inf/nan specials are handled above).
+                // `Double("1e400")` yields `inf`, not nil — reject the
+                // overflow (the inf/nan specials are handled above).
                 guard let d = Double(value), !d.isInfinite else {
                     throw ParseError(line: 0, message: "invalid float value '\(value)'")
                 }
                 return .float(d)
             }
         default:
-            // datetime kinds: the value is a TOML datetime literal — reuse the
-            // strict decoder so it lands in the right one of the four cases.
+            // The four datetime tags: the value is a TOML datetime literal,
+            // and the strict decoder already sorts it into the right case.
             return try decodeStrict(value)
         }
     }
@@ -161,9 +160,9 @@ extension Toml {
         if d.isNaN { return "nan" }
         if d.isInfinite { return d < 0 ? "-inf" : "inf" }
         var s = String(d)
-        // `String(Double)` drops the decimal point for large whole-valued
-        // doubles (e.g. 9007199254740991.0 → "9007199254740991"), which would
-        // read back as an INTEGER. A TOML float must carry a `.` or exponent.
+        // `String(Double)` drops the decimal point for a large whole-valued
+        // double (9007199254740991.0 → "9007199254740991"), which would read
+        // back as an INTEGER; a TOML float must carry a `.` or an exponent.
         if !s.contains(where: { $0 == "." || $0 == "e" || $0 == "E" }) { s += ".0" }
         return s
     }
